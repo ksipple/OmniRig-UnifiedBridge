@@ -520,7 +520,7 @@ def omnirig_worker_thread():
                         rig_blackout_until = current_time + 3.0
                         time.sleep(0.02)
                         if radio_num == 1:
-                            rig_obj.Freq = target_freq_int; time.sleep(0.15); rig_obj.Mode = mode_code
+                            rig_obj.FreqA = target_freq_int; time.sleep(0.15); rig_obj.Mode = mode_code; time.sleep(0.05); rig_obj.Freq = target_freq_int
                         elif radio_num == 2:
                             rig_obj.FreqA = target_freq_int; time.sleep(0.25); rig_obj.Mode = mode_code; time.sleep(0.05); rig_obj.Freq = target_freq_int 
                         last_freqs[radio_num] = target_freq_int; last_modes[radio_num] = mode_code
