@@ -294,7 +294,7 @@ class BridgeGUIApp(tk.Tk):
         self.rig1_lf.pack(side='left', fill='both', expand=True, padx=5, pady=5)
         self.lbl_r1_freq = tk.Label(self.rig1_lf, text="0.000.000 MHz", font=('Courier New', 16, 'bold'), bg="#1e1e1e", fg="#ffffff")
         self.lbl_r1_freq.pack(pady=2)
-        self.lbl_r1_freq_b = tk.Label(self.rig1_lf, text="VFO-B: 0.000.000 MHz", font=('Courier New', 11), bg="#1e1e1e", fg="#888888")
+        self.lbl_r1_freq_b = tk.Label(self.rig1_lf, text="VFO-B / Sub: 0.000.000 MHz", font=('Courier New', 11), bg="#1e1e1e", fg="#888888")
         self.lbl_r1_freq_b.pack(pady=2)
         self.lbl_r1_mode = tk.Label(self.rig1_lf, text="MODE: --", font=('Helvetica', 10), bg="#1e1e1e", fg="#aaaaaa")
         self.lbl_r1_mode.pack(pady=2)
@@ -306,7 +306,7 @@ class BridgeGUIApp(tk.Tk):
         self.rig2_lf.pack(side='right', fill='both', expand=True, padx=5, pady=5)
         self.lbl_r2_freq = tk.Label(self.rig2_lf, text="0.000.000 MHz", font=('Courier New', 16, 'bold'), bg="#1e1e1e", fg="#ffffff")
         self.lbl_r2_freq.pack(pady=2)
-        self.lbl_r2_freq_b = tk.Label(self.rig2_lf, text="VFO-B: 0.000.000 MHz", font=('Courier New', 11), bg="#1e1e1e", fg="#888888")
+        self.lbl_r2_freq_b = tk.Label(self.rig2_lf, text="VFO-B / Sub: 0.000.000 MHz", font=('Courier New', 11), bg="#1e1e1e", fg="#888888")
         self.lbl_r2_freq_b.pack(pady=2)
         self.lbl_r2_mode = tk.Label(self.rig2_lf, text="MODE: --", font=('Helvetica', 10), bg="#1e1e1e", fg="#aaaaaa")
         self.lbl_r2_mode.pack(pady=2)
@@ -491,7 +491,13 @@ def omnirig_worker_thread():
 
         with queue_lock:
             if tune_queue:
-                radio_num, target_freq, target_mode, origin = tune_queue.pop(0)
+                queue_item = tune_queue.pop(0)
+                radio_num = queue_item[0]
+                target_freq = queue_item[1]
+                target_mode = queue_item[2]
+                origin = queue_item[3]
+                target_vfo = queue_item[4].upper() if len(queue_item) > 4 else "A"
+                
                 if not rig_polling_enabled[radio_num]: continue
                 try:
                     target_freq_int = int(target_freq)
@@ -503,16 +509,21 @@ def omnirig_worker_thread():
                     else:
                         mode_code = TO_BITMASK.get(force_selection, 33554432)
 
-                    ui_print(f"[{origin.upper()} -> Rig {radio_num}] Moving {radio_label}: {target_freq_int} Hz")
-                    rig_blackout_until = current_time + 3.0
-                    time.sleep(0.02)
-
-                    if radio_num == 1:
-                        rig_obj.Freq = target_freq_int; time.sleep(0.15); rig_obj.Mode = mode_code
-                    elif radio_num == 2:
-                        rig_obj.FreqA = target_freq_int; time.sleep(0.25); rig_obj.Mode = mode_code; time.sleep(0.05); rig_obj.Freq = target_freq_int 
-
-                    last_freqs[radio_num] = target_freq_int; last_modes[radio_num] = mode_code
+                    if target_vfo == "B":
+                        ui_print(f"[{origin.upper()} -> Rig {radio_num} VFO-B / Sub] Moving {radio_label} VFO-B / Sub: {target_freq_int} Hz")
+                        rig_blackout_until = current_time + 3.0
+                        time.sleep(0.02)
+                        rig_obj.FreqB = target_freq_int
+                        last_freqs_b[radio_num] = target_freq_int
+                    else:
+                        ui_print(f"[{origin.upper()} -> Rig {radio_num}] Moving {radio_label}: {target_freq_int} Hz")
+                        rig_blackout_until = current_time + 3.0
+                        time.sleep(0.02)
+                        if radio_num == 1:
+                            rig_obj.Freq = target_freq_int; time.sleep(0.15); rig_obj.Mode = mode_code
+                        elif radio_num == 2:
+                            rig_obj.FreqA = target_freq_int; time.sleep(0.25); rig_obj.Mode = mode_code; time.sleep(0.05); rig_obj.Freq = target_freq_int 
+                        last_freqs[radio_num] = target_freq_int; last_modes[radio_num] = mode_code
                 except Exception as e: ui_print(f"❌ Tuning failed: {e}"); status_states["omnirig"] = "offline"; omnirig = None
 
         if current_time > rig_blackout_until and omnirig:
@@ -532,7 +543,7 @@ def omnirig_worker_thread():
                         last_freqs[1] = r1_freq; last_modes[1] = r1_mode
                         
                     if r1_freq_b > 0 and abs(r1_freq_b - last_freqs_b[1]) > CONFIG["FREQ_TOLERANCE"]:
-                        ui_print(f"[{CONFIG['RADIO_1_NAME']} VFO-B Change] {r1_freq_b} Hz")
+                        ui_print(f"[{CONFIG['RADIO_1_NAME']} VFO-B / Sub Change] {r1_freq_b} Hz")
                         last_freqs_b[1] = r1_freq_b
                 except: status_states["omnirig"] = "offline"; omnirig = None
 
@@ -552,7 +563,7 @@ def omnirig_worker_thread():
                         last_freqs[2] = r2_freq; last_modes[2] = r2_mode
                         
                     if r2_freq_b > 0 and abs(r2_freq_b - last_freqs_b[2]) > CONFIG["FREQ_TOLERANCE"]:
-                        ui_print(f"[{CONFIG['RADIO_2_NAME']} VFO-B Change] {r2_freq_b} Hz")
+                        ui_print(f"[{CONFIG['RADIO_2_NAME']} VFO-B / Sub Change] {r2_freq_b} Hz")
                         last_freqs_b[2] = r2_freq_b
                 except: status_states["omnirig"] = "offline"; omnirig = None
         time.sleep(CONFIG["POLL_INTERVAL"])
@@ -646,14 +657,19 @@ def parameterized_tcp_listener(assigned_radio_index):
                         raw_string = data.decode('utf-8', errors='ignore')
                         if "OPTIONS" in raw_string: break
                         
+                        raw_string_lower = raw_string.lower()
+                        target_vfo = "A"
+                        if "vfo_b" in raw_string_lower or "vfo-b" in raw_string_lower or "vfob" in raw_string_lower or "sub" in raw_string_lower:
+                            target_vfo = "B"
+                        
                         match = re.search(r'/(\d{5,9})/([a-zA-Z0-9\-]+)', raw_string)
                         if match:
                             extracted_freq = int(match.group(1))
                             extracted_mode = match.group(2).upper()
                             radio_label = CONFIG["RADIO_1_NAME"] if assigned_radio_index == 1 else CONFIG["RADIO_2_NAME"]
                             
-                            ui_print(f"[Port {port}] Intercepted Wavelog Command -> {extracted_freq} Hz")
-                            with queue_lock: tune_queue.append((assigned_radio_index, extracted_freq, extracted_mode, "wavelog"))
+                            ui_print(f"[Port {port}] Intercepted Wavelog Command -> {extracted_freq} Hz ({'VFO-B / Sub' if target_vfo == 'B' else 'VFO-A / Main'})")
+                            with queue_lock: tune_queue.append((assigned_radio_index, extracted_freq, extracted_mode, "wavelog", target_vfo))
                             threading.Thread(target=post_to_wavelog_api, args=(radio_label, extracted_freq, extracted_mode), daemon=True).start()
                         break
 
