@@ -19,16 +19,41 @@ from tkinter import ttk, scrolledtext, messagebox
 CONFIG = {
     "FLDIGI_URL": "http://localhost:7362/",
     "FORCE_MODE_SELECTION": "DATA",
-    "WAVELOG_URL": "https://wavelog.sippleware.com",
-    "WAVELOG_API_KEY": "wl26feb86cfe779",
-    "RADIO_1_NAME": "Elecraft K3",
-    "RADIO_2_NAME": "ICom IC-9100",
+    "WAVELOG_URL": "https://wavelog.example.com",
+    "WAVELOG_API_KEY": "YOUR_API_KEY_HERE",
+    "RADIO_1_NAME": "Radio 1",
+    "RADIO_2_NAME": "Radio 2",
     "HOST": "127.0.0.1",
     "PORT_RADIO_1": 54321,
     "PORT_RADIO_2": 54322,
     "POLL_INTERVAL": 0.2,
     "FREQ_TOLERANCE": 10
 }
+
+def load_config():
+    global CONFIG
+    config_path = "config.json"
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r") as f:
+                loaded = json.load(f)
+                for k, v in loaded.items():
+                    if k in CONFIG:
+                        CONFIG[k] = type(CONFIG[k])(v)
+        except Exception as e:
+            print(f"Error loading config.json: {e}")
+
+def save_config():
+    config_path = "config.json"
+    try:
+        with open(config_path, "w") as f:
+            json.dump(CONFIG, f, indent=4)
+    except Exception as e:
+        print(f"Error saving config.json: {e}")
+
+# Load configuration on startup
+load_config()
+
 
 OMNIRIG_MODES = {
     16777216: "CW", 8388608: "CW-R", 67108864: "LSB", 33554432: "USB",
@@ -45,6 +70,7 @@ tune_queue = []
 queue_lock = threading.Lock()
 
 last_freqs = {1: 0, 2: 0}
+last_freqs_b = {1: 0, 2: 0}
 last_modes = {1: 0, 2: 0}
 
 rig_blackout_until = 0
@@ -67,7 +93,7 @@ class OptionsDialog(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("Bridge Settings & Parameters")
-        self.geometry("450x420")
+        self.geometry("450x450")
         self.configure(bg="#252526")
         self.transient(parent)
         self.grab_set()
@@ -87,6 +113,7 @@ class OptionsDialog(tk.Toplevel):
         self.entries = {}
         fields = [
             ("FLDIGI_URL", "Fldigi XML-RPC URL:"),
+            ("FORCE_MODE_SELECTION", "Force Mode Selection:"),
             ("WAVELOG_URL", "Wavelog URL:"),
             ("WAVELOG_API_KEY", "Wavelog API Key:"),
             ("RADIO_1_NAME", "Rig 1 Radio Name:"),
@@ -100,10 +127,39 @@ class OptionsDialog(tk.Toplevel):
             lbl = tk.Label(self, text=label_text, bg="#252526", fg="#ffffff", font=('Helvetica', 9))
             lbl.grid(row=idx, column=0, sticky='e', padx=15, pady=6)
             
-            ent = tk.Entry(self, bg="#1e1e1e", fg="#ffffff", insertbackground='white', relief='flat', font=('Consolas', 9))
-            ent.insert(0, str(CONFIG[key]))
-            ent.grid(row=idx, column=1, sticky='ew', padx=15, pady=6)
-            self.entries[key] = ent
+            if key == "FORCE_MODE_SELECTION":
+                combobox = ttk.Combobox(self, values=["NONE", "CW", "CW-R", "LSB", "USB", "FM", "AM", "DATA", "DATA-R"], state="readonly")
+                curr_val = CONFIG.get("FORCE_MODE_SELECTION", "DATA").upper()
+                if curr_val in combobox['values']:
+                    combobox.set(curr_val)
+                else:
+                    combobox.set("DATA")
+                combobox.grid(row=idx, column=1, sticky='ew', padx=15, pady=6)
+                self.entries[key] = combobox
+            elif key == "WAVELOG_API_KEY":
+                entry_frame = tk.Frame(self, bg="#252526")
+                entry_frame.grid(row=idx, column=1, sticky='ew', padx=15, pady=6)
+                
+                ent = tk.Entry(entry_frame, bg="#1e1e1e", fg="#ffffff", insertbackground='white', relief='flat', font=('Consolas', 9), show='*')
+                ent.insert(0, str(CONFIG[key]))
+                ent.pack(side='left', fill='x', expand=True)
+                self.entries[key] = ent
+                
+                def toggle_api_key_visibility(e=ent):
+                    if e.cget('show') == '*':
+                        e.config(show='')
+                        btn_toggle.config(text="🙈")
+                    else:
+                        e.config(show='*')
+                        btn_toggle.config(text="👁️")
+                
+                btn_toggle = tk.Button(entry_frame, text="👁️", bg="#3c3c3c", fg="white", font=('Helvetica', 8), relief='flat', command=toggle_api_key_visibility, width=3)
+                btn_toggle.pack(side='right', padx=(5, 0))
+            else:
+                ent = tk.Entry(self, bg="#1e1e1e", fg="#ffffff", insertbackground='white', relief='flat', font=('Consolas', 9))
+                ent.insert(0, str(CONFIG[key]))
+                ent.grid(row=idx, column=1, sticky='ew', padx=15, pady=6)
+                self.entries[key] = ent
 
         # Action Buttons frame
         btn_frame = tk.Frame(self, bg="#252526")
@@ -125,6 +181,7 @@ class OptionsDialog(tk.Toplevel):
             
             # Commit mutations directly to global space
             CONFIG["FLDIGI_URL"] = self.entries["FLDIGI_URL"].get().strip()
+            CONFIG["FORCE_MODE_SELECTION"] = self.entries["FORCE_MODE_SELECTION"].get().strip()
             CONFIG["WAVELOG_URL"] = self.entries["WAVELOG_URL"].get().strip()
             CONFIG["WAVELOG_API_KEY"] = self.entries["WAVELOG_API_KEY"].get().strip()
             CONFIG["RADIO_1_NAME"] = self.entries["RADIO_1_NAME"].get().strip()
@@ -137,7 +194,10 @@ class OptionsDialog(tk.Toplevel):
             self.master.update_labels_from_config()
             fldigi_blackout_until = time.time() + 1.0
             
-            ui_print("⚙️ Configuration maps updated successfully.")
+            # Save configuration to file
+            save_config()
+            
+            ui_print("⚙️ Configuration maps updated and saved to config.json.")
             self.destroy()
         except ValueError:
             messagebox.showerror("Validation Error", "Ports and Tolerance properties must be valid integers.")
@@ -150,7 +210,7 @@ class BridgeGUIApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("OmniRig - Fldigi - Wavelog Configurable Bridge")
-        self.geometry("780x590")
+        self.geometry("780x615")
         self.configure(bg="#1e1e1e")
         
         self.style = ttk.Style()
@@ -203,12 +263,11 @@ class BridgeGUIApp(tk.Tk):
         lbl_target = tk.Label(target_container, text="Fldigi Target Rig:", bg="#1e1e1e", fg="#ffffff", font=('Helvetica', 9, 'bold'))
         lbl_target.pack(side='left', padx=5)
         
-        self.combo_target = ttk.Combobox(target_container, values=["Rig 1", "Rig 2"], state="readonly", width=10)
-        self.combo_target.current(0)
+        self.combo_target = ttk.Combobox(target_container, state="readonly", width=25)
         self.combo_target.pack(side='left', padx=5)
         self.combo_target.bind("<<ComboboxSelected>>", self.on_fldigi_target_changed)
         
-        # Buttons Row (Kill & Options side by side)
+        # Buttons Row (Kill, Setup & Options)
         btn_row = tk.Frame(ops_lf, bg="#1e1e1e")
         btn_row.pack(fill='x', padx=10, pady=6, side='bottom')
 
@@ -216,6 +275,11 @@ class BridgeGUIApp(tk.Tk):
                                 font=('Helvetica', 9, 'bold'), relief='flat', overrelief='groove',
                                 command=self.open_options_dialog)
         btn_options.pack(side='left', expand=True, fill='x', padx=2)
+
+        btn_omni_settings = tk.Button(btn_row, text="📻 OmniRig Setup", bg="#3a3a3a", fg="white",
+                                      font=('Helvetica', 9, 'bold'), relief='flat', overrelief='groove',
+                                      command=self.open_omnirig_dialog)
+        btn_omni_settings.pack(side='left', expand=True, fill='x', padx=2)
 
         btn_kill_omni = tk.Button(btn_row, text="💥 Kill OmniRig", bg="#b71c1c", fg="white", 
                                   font=('Helvetica', 9, 'bold'), relief='flat', overrelief='groove',
@@ -229,22 +293,26 @@ class BridgeGUIApp(tk.Tk):
         self.rig1_lf = ttk.LabelFrame(cards_frame, text=" RIG 1 ")
         self.rig1_lf.pack(side='left', fill='both', expand=True, padx=5, pady=5)
         self.lbl_r1_freq = tk.Label(self.rig1_lf, text="0.000.000 MHz", font=('Courier New', 16, 'bold'), bg="#1e1e1e", fg="#ffffff")
-        self.lbl_r1_freq.pack(pady=5)
+        self.lbl_r1_freq.pack(pady=2)
+        self.lbl_r1_freq_b = tk.Label(self.rig1_lf, text="VFO-B: 0.000.000 MHz", font=('Courier New', 11), bg="#1e1e1e", fg="#888888")
+        self.lbl_r1_freq_b.pack(pady=2)
         self.lbl_r1_mode = tk.Label(self.rig1_lf, text="MODE: --", font=('Helvetica', 10), bg="#1e1e1e", fg="#aaaaaa")
         self.lbl_r1_mode.pack(pady=2)
         self.reg1_enabled_var = tk.BooleanVar(value=True)
         cb_r1 = ttk.Checkbutton(self.rig1_lf, text="Enable OmniRig Polling", variable=self.reg1_enabled_var, command=self.toggle_r1)
-        cb_r1.pack(pady=8)
+        cb_r1.pack(pady=6)
 
         self.rig2_lf = ttk.LabelFrame(cards_frame, text=" RIG 2 ")
         self.rig2_lf.pack(side='right', fill='both', expand=True, padx=5, pady=5)
         self.lbl_r2_freq = tk.Label(self.rig2_lf, text="0.000.000 MHz", font=('Courier New', 16, 'bold'), bg="#1e1e1e", fg="#ffffff")
-        self.lbl_r2_freq.pack(pady=5)
+        self.lbl_r2_freq.pack(pady=2)
+        self.lbl_r2_freq_b = tk.Label(self.rig2_lf, text="VFO-B: 0.000.000 MHz", font=('Courier New', 11), bg="#1e1e1e", fg="#888888")
+        self.lbl_r2_freq_b.pack(pady=2)
         self.lbl_r2_mode = tk.Label(self.rig2_lf, text="MODE: --", font=('Helvetica', 10), bg="#1e1e1e", fg="#aaaaaa")
         self.lbl_r2_mode.pack(pady=2)
         self.reg2_enabled_var = tk.BooleanVar(value=True)
         cb_r2 = ttk.Checkbutton(self.rig2_lf, text="Enable OmniRig Polling", variable=self.reg2_enabled_var, command=self.toggle_r2)
-        cb_r2.pack(pady=8)
+        cb_r2.pack(pady=6)
 
         # Log Terminal Output console
         log_lf = ttk.LabelFrame(self, text=" LIVE SYSTEM ACTIVITY LOG ")
@@ -258,17 +326,69 @@ class BridgeGUIApp(tk.Tk):
     def open_options_dialog(self):
         OptionsDialog(self)
 
+    def open_omnirig_dialog(self):
+        ui_print("⚙️ Requesting OmniRig Settings Dialog...")
+        def run():
+            import subprocess
+            paths = [
+                r"C:\Program Files (x86)\Afreet\OmniRig\OmniRig.exe",
+                r"C:\Program Files\Afreet\OmniRig\OmniRig.exe"
+            ]
+            exe_path = None
+            for p in paths:
+                if os.path.exists(p):
+                    exe_path = p
+                    break
+            
+            if not exe_path:
+                try:
+                    import winreg
+                    for view in [0, winreg.KEY_WOW64_32KEY, winreg.KEY_WOW64_64KEY]:
+                        try:
+                            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Afreet\OmniRig", 0, winreg.KEY_READ | view)
+                            val, _ = winreg.QueryValueEx(key, "Path")
+                            winreg.CloseKey(key)
+                            if val:
+                                candidate = os.path.join(val, "OmniRig.exe")
+                                if os.path.exists(candidate):
+                                    exe_path = candidate
+                                    break
+                        except OSError:
+                            pass
+                except Exception:
+                    pass
+            
+            if exe_path:
+                try:
+                    subprocess.Popen([exe_path])
+                    ui_print(f"✅ OmniRig settings program launched: {exe_path}")
+                except Exception as e:
+                    ui_print(f"❌ Failed to launch OmniRig executable: {e}")
+            else:
+                ui_print("❌ OmniRig executable not found on this system. Please check your installation.")
+        threading.Thread(target=run, daemon=True).start()
+
     def update_labels_from_config(self):
         """Forces container frames to redraw labels when configuration changes."""
         self.rig1_lf.config(text=f" RIG 1: {CONFIG['RADIO_1_NAME']} " + ("[FLDIGI TARGET]" if current_fldigi_target_rig == 1 else ""))
         self.rig2_lf.config(text=f" RIG 2: {CONFIG['RADIO_2_NAME']} " + ("[FLDIGI TARGET]" if current_fldigi_target_rig == 2 else ""))
+        
+        r1_val = f"Rig 1: {CONFIG['RADIO_1_NAME']}"
+        r2_val = f"Rig 2: {CONFIG['RADIO_2_NAME']}"
+        self.combo_target['values'] = [r1_val, r2_val]
+        
+        if current_fldigi_target_rig == 1:
+            self.combo_target.set(r1_val)
+        else:
+            self.combo_target.set(r2_val)
 
     def toggle_r1(self): rig_polling_enabled[1] = self.reg1_enabled_var.get()
     def toggle_r2(self): rig_polling_enabled[2] = self.reg2_enabled_var.get()
 
     def on_fldigi_target_changed(self, event):
         global current_fldigi_target_rig, fldigi_blackout_until
-        current_fldigi_target_rig = 1 if self.combo_target.get() == "Rig 1" else 2
+        val = self.combo_target.get()
+        current_fldigi_target_rig = 1 if val.startswith("Rig 1") else 2
         fldigi_blackout_until = time.time() + 1.0
         self.update_labels_from_config()
         ui_print(f"🎯 Fldigi sync target route changed to: Rig {current_fldigi_target_rig}")
@@ -297,20 +417,36 @@ class BridgeGUIApp(tk.Tk):
         # Update Rig 1 Displays
         if rig_polling_enabled[1]:
             f1 = last_freqs[1]
+            f1_b = last_freqs_b[1]
             m1 = OMNIRIG_MODES.get(last_modes[1], "--") if last_modes[1] else "--"
             if f1 > 0:
                 self.lbl_r1_freq.config(text=f"{f1 / 1_000_000:,.6f} MHz", fg="#ffffff")
                 self.lbl_r1_mode.config(text=f"MODE: {m1}")
-        else: self.lbl_r1_freq.config(text="PAUSED / DISABLED", fg="#ff4444"); self.lbl_r1_mode.config(text="MODE: --")
+            if f1_b > 0:
+                self.lbl_r1_freq_b.config(text=f"VFO-B: {f1_b / 1_000_000:,.6f} MHz", fg="#00ffcc")
+            else:
+                self.lbl_r1_freq_b.config(text="VFO-B: --.------ MHz", fg="#aaaaaa")
+        else:
+            self.lbl_r1_freq.config(text="PAUSED / DISABLED", fg="#ff4444")
+            self.lbl_r1_freq_b.config(text="VFO-B: --", fg="#ff4444")
+            self.lbl_r1_mode.config(text="MODE: --")
 
         # Update Rig 2 Displays
         if rig_polling_enabled[2]:
             f2 = last_freqs[2]
+            f2_b = last_freqs_b[2]
             m2 = OMNIRIG_MODES.get(last_modes[2], "--") if last_modes[2] else "--"
             if f2 > 0:
                 self.lbl_r2_freq.config(text=f"{f2 / 1_000_000:,.6f} MHz", fg="#ffffff")
                 self.lbl_r2_mode.config(text=f"MODE: {m2}")
-        else: self.lbl_r2_freq.config(text="PAUSED / DISABLED", fg="#ff4444"); self.lbl_r2_mode.config(text="MODE: --")
+            if f2_b > 0:
+                self.lbl_r2_freq_b.config(text=f"VFO-B: {f2_b / 1_000_000:,.6f} MHz", fg="#00ffcc")
+            else:
+                self.lbl_r2_freq_b.config(text="VFO-B: --.------ MHz", fg="#aaaaaa")
+        else:
+            self.lbl_r2_freq.config(text="PAUSED / DISABLED", fg="#ff4444")
+            self.lbl_r2_freq_b.config(text="VFO-B: --", fg="#ff4444")
+            self.lbl_r2_mode.config(text="MODE: --")
 
         # Status Dot Render Engines
         self.draw_status_dot(self.canvas_omni, "#00ff00" if status_states["omnirig"] == "online" else "#ff0000")
@@ -361,7 +497,11 @@ def omnirig_worker_thread():
                     target_freq_int = int(target_freq)
                     rig_obj = omnirig.Rig1 if radio_num == 1 else omnirig.Rig2
                     radio_label = CONFIG["RADIO_1_NAME"] if radio_num == 1 else CONFIG["RADIO_2_NAME"]
-                    mode_code = TO_BITMASK.get(CONFIG["FORCE_MODE_SELECTION"].upper() if origin == "fldigi" else target_mode.upper(), 33554432)
+                    force_selection = CONFIG.get("FORCE_MODE_SELECTION", "DATA").upper()
+                    if force_selection == "NONE" or origin != "fldigi":
+                        mode_code = TO_BITMASK.get(target_mode.upper(), 33554432)
+                    else:
+                        mode_code = TO_BITMASK.get(force_selection, 33554432)
 
                     ui_print(f"[{origin.upper()} -> Rig {radio_num}] Moving {radio_label}: {target_freq_int} Hz")
                     rig_blackout_until = current_time + 3.0
@@ -380,6 +520,8 @@ def omnirig_worker_thread():
             if rig_polling_enabled[1]:
                 try:
                     r1_freq = omnirig.Rig1.Freq; r1_mode = omnirig.Rig1.Mode; status_states["omnirig"] = "online"
+                    r1_freq_b = omnirig.Rig1.FreqB
+                    
                     if r1_freq > 0 and (abs(r1_freq - last_freqs[1]) > CONFIG["FREQ_TOLERANCE"] or r1_mode != last_modes[1]):
                         friendly_mode = OMNIRIG_MODES.get(r1_mode, "USB")
                         ui_print(f"[{CONFIG['RADIO_1_NAME']} Dial Move] {r1_freq} Hz")
@@ -388,12 +530,18 @@ def omnirig_worker_thread():
                             fldigi_blackout_until = current_time + 1.5
                             threading.Thread(target=sync_to_fldigi, args=(r1_freq, friendly_mode), daemon=True).start()
                         last_freqs[1] = r1_freq; last_modes[1] = r1_mode
+                        
+                    if r1_freq_b > 0 and abs(r1_freq_b - last_freqs_b[1]) > CONFIG["FREQ_TOLERANCE"]:
+                        ui_print(f"[{CONFIG['RADIO_1_NAME']} VFO-B Change] {r1_freq_b} Hz")
+                        last_freqs_b[1] = r1_freq_b
                 except: status_states["omnirig"] = "offline"; omnirig = None
 
             # Rig 2 Monitoring Loop
             if rig_polling_enabled[2] and omnirig:
                 try:
                     r2_freq = omnirig.Rig2.Freq; r2_mode = omnirig.Rig2.Mode; status_states["omnirig"] = "online"
+                    r2_freq_b = omnirig.Rig2.FreqB
+                    
                     if r2_freq > 0 and (abs(r2_freq - last_freqs[2]) > CONFIG["FREQ_TOLERANCE"] or r2_mode != last_modes[2]):
                         friendly_mode = OMNIRIG_MODES.get(r2_mode, "USB")
                         ui_print(f"[{CONFIG['RADIO_2_NAME']} Dial Move] {r2_freq} Hz")
@@ -402,6 +550,10 @@ def omnirig_worker_thread():
                             fldigi_blackout_until = current_time + 1.5
                             threading.Thread(target=sync_to_fldigi, args=(r2_freq, friendly_mode), daemon=True).start()
                         last_freqs[2] = r2_freq; last_modes[2] = r2_mode
+                        
+                    if r2_freq_b > 0 and abs(r2_freq_b - last_freqs_b[2]) > CONFIG["FREQ_TOLERANCE"]:
+                        ui_print(f"[{CONFIG['RADIO_2_NAME']} VFO-B Change] {r2_freq_b} Hz")
+                        last_freqs_b[2] = r2_freq_b
                 except: status_states["omnirig"] = "offline"; omnirig = None
         time.sleep(CONFIG["POLL_INTERVAL"])
 
