@@ -6,7 +6,6 @@ import config
 import network_workers
 
 def omnirig_worker_thread():
-    """Handles background COM dispatch processing loops interfacing with hardware."""
     pythoncom.CoInitializeEx(pythoncom.COINIT_MULTITHREADED)
     omnirig = None
     config.ui_print("OmniRig Sync Engine Active.")
@@ -20,10 +19,11 @@ def omnirig_worker_thread():
                 config.status_states["omnirig"] = "online"
             except Exception:
                 config.status_states["omnirig"] = "offline"
+                config.status_states["rig1_hw"] = "offline"
+                config.status_states["rig2_hw"] = "offline"
                 time.sleep(2.0)
                 continue
 
-        # Processing Command Tuning Queues
         with config.queue_lock:
             if config.tune_queue:
                 queue_item = config.tune_queue.pop(0)
@@ -46,7 +46,7 @@ def omnirig_worker_thread():
                             mode_code = config.TO_BITMASK.get(force_selection, 33554432)
 
                         if target_vfo == "B":
-                            config.ui_print(f"[{origin.upper()} -> Rig {radio_num} VFO-B / Sub] Moving {radio_label} VFO-B / Sub: {target_freq_int} Hz")
+                            config.ui_print(f"[{origin.upper()} -> Rig {radio_num} VFO-B] Moving {radio_label}: {target_freq_int} Hz")
                             config.rig_blackout_until = current_time + 3.0
                             time.sleep(0.02)
                             rig_obj.FreqB = target_freq_int
@@ -76,6 +76,9 @@ def omnirig_worker_thread():
                     r1_freq_b = omnirig.Rig1.FreqB
                     config.status_states["omnirig"] = "online"
                     
+                    # If frequency reads exactly 0, the transceiver's main CPU is offline/powered down
+                    config.status_states["rig1_hw"] = "online" if r1_freq > 0 else "offline"
+                    
                     if r1_freq > 0 and (abs(r1_freq - config.last_freqs[1]) > config.CONFIG["FREQ_TOLERANCE"] or r1_mode != config.last_modes[1]):
                         friendly_mode = config.OMNIRIG_MODES.get(r1_mode, "USB")
                         config.ui_print(f"[{config.CONFIG['RADIO_1_NAME']} Dial Move] {r1_freq} Hz")
@@ -86,9 +89,14 @@ def omnirig_worker_thread():
                         config.last_freqs[1] = r1_freq; config.last_modes[1] = r1_mode
                         
                     if r1_freq_b > 0 and abs(r1_freq_b - config.last_freqs_b[1]) > config.CONFIG["FREQ_TOLERANCE"]:
-                        config.ui_print(f"[{config.CONFIG['RADIO_1_NAME']} VFO-B / Sub Change] {r1_freq_b} Hz")
+                        config.ui_print(f"[{config.CONFIG['RADIO_1_NAME']} VFO-B Change] {r1_freq_b} Hz")
                         config.last_freqs_b[1] = r1_freq_b
-                except: config.status_states["omnirig"] = "offline"; omnirig = None
+                except: 
+                    config.status_states["omnirig"] = "offline"
+                    config.status_states["rig1_hw"] = "offline"
+                    omnirig = None
+            else:
+                config.status_states["rig1_hw"] = "offline"
 
             # Rig 2 Monitoring Loop
             if config.rig_polling_enabled[2] and omnirig:
@@ -97,6 +105,8 @@ def omnirig_worker_thread():
                     r2_mode = omnirig.Rig2.Mode
                     r2_freq_b = omnirig.Rig2.FreqB
                     config.status_states["omnirig"] = "online"
+                    
+                    config.status_states["rig2_hw"] = "online" if r2_freq > 0 else "offline"
                     
                     if r2_freq > 0 and (abs(r2_freq - config.last_freqs[2]) > config.CONFIG["FREQ_TOLERANCE"] or r2_mode != config.last_modes[2]):
                         friendly_mode = config.OMNIRIG_MODES.get(r2_mode, "USB")
@@ -108,8 +118,13 @@ def omnirig_worker_thread():
                         config.last_freqs[2] = r2_freq; config.last_modes[2] = r2_mode
                         
                     if r2_freq_b > 0 and abs(r2_freq_b - config.last_freqs_b[2]) > config.CONFIG["FREQ_TOLERANCE"]:
-                        config.ui_print(f"[{config.CONFIG['RADIO_2_NAME']} VFO-B / Sub Change] {r2_freq_b} Hz")
+                        config.ui_print(f"[{config.CONFIG['RADIO_2_NAME']} VFO-B Change] {r2_freq_b} Hz")
                         config.last_freqs_b[2] = r2_freq_b
-                except: config.status_states["omnirig"] = "offline"; omnirig = None
+                except: 
+                    config.status_states["omnirig"] = "offline"
+                    config.status_states["rig2_hw"] = "offline"
+                    omnirig = None
+            else:
+                config.status_states["rig2_hw"] = "offline"
                 
         time.sleep(config.CONFIG["POLL_INTERVAL"])

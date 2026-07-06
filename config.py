@@ -14,12 +14,14 @@ CONFIG = {
     "PORT_RADIO_1": 54321,
     "PORT_RADIO_2": 54322,
     "POLL_INTERVAL": 0.2,
-    "FREQ_TOLERANCE": 10
+    "FREQ_TOLERANCE": 10,
+    "STARTUP_POLL_RIG_1": True,
+    "STARTUP_POLL_RIG_2": True
 }
 
 def load_config():
     """Loads runtime configurations from local storage on execution startup."""
-    global CONFIG
+    global CONFIG, rig_polling_enabled
     config_path = "config.json"
     if os.path.exists(config_path):
         try:
@@ -28,6 +30,8 @@ def load_config():
                 for k, v in loaded.items():
                     if k in CONFIG:
                         CONFIG[k] = type(CONFIG[k])(v)
+            rig_polling_enabled[1] = CONFIG["STARTUP_POLL_RIG_1"]
+            rig_polling_enabled[2] = CONFIG["STARTUP_POLL_RIG_2"]
         except Exception as e:
             print(f"Error loading config.json: {e}")
 
@@ -39,9 +43,6 @@ def save_config():
             json.dump(CONFIG, f, indent=4)
     except Exception as e:
         print(f"Error saving config.json: {e}")
-
-# Load active dictionary on module importation step
-load_config()
 
 # Transceiver Register Bitmasks Maps
 OMNIRIG_MODES = {
@@ -55,7 +56,6 @@ TO_BITMASK = {
     "DATA-R": 268435456, "FT8": 268435456, "FT4": 268435456, "RTTY": 134217728  
 }
 
-# Cross-Thread Worker Buffers & Locks
 tune_queue = []
 queue_lock = threading.Lock()
 
@@ -67,17 +67,22 @@ rig_blackout_until = 0
 fldigi_blackout_until = 0
 last_pushed_to_fldigi = 0
 
-# Runtime Interlink Memory Variables
-rig_polling_enabled = {1: True, 2: True}
-status_states = {"omnirig": "offline", "fldigi": "offline", "wavelog": "offline"}
+rig_polling_enabled = {1: False, 2: False}
+status_states = {
+    "omnirig": "offline", 
+    "fldigi": "offline", 
+    "wavelog": "offline",
+    "rig1_hw": "offline",  
+    "rig2_hw": "offline"   
+}
 current_fldigi_target_rig = 1  
 active_ports = {1: CONFIG["PORT_RADIO_1"], 2: CONFIG["PORT_RADIO_2"]}
 
-# External reference bound to GUI layout container
 _app_instance = None
 
 def ui_print(msg):
-    """Prints messages safely to stdout terminal and redirects onto visual logs."""
     print(msg)
     if _app_instance is not None:
         _app_instance.log_message(msg)
+
+load_config()
