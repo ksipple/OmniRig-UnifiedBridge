@@ -36,9 +36,7 @@ Plaintext
 ### **2\. Dependencies**
 
 Install the required packages using pip:
-
-Bash  
-pip install pywin32 requests
+`pip install pywin32 requests`
 
 ### **3\. Setup**
 
@@ -46,10 +44,8 @@ Download all 5 files (`config.py`, `gui_app.py`, `omnirig_engine.py`, `network_w
 
 ## **🚀 Usage**
 
-Launch the bridge application by executing the orchestrator entry point:
-
-Bash  
-python main.py
+Launch the bridge application: 
+`python main.py`
 
 ### **Key GUI Actions:**
 
