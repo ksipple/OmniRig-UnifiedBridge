@@ -3,13 +3,15 @@ import time
 import threading
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
+import subprocess
 import config
+import network_workers
 
 class OptionsDialog(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("Bridge Settings & Parameters")
-        self.geometry("450x510")  
+        self.geometry("450x430")  # Adjusted down due to removed elements
         self.configure(bg="#252526")
         self.transient(parent)
         self.grab_set()
@@ -70,25 +72,6 @@ class OptionsDialog(tk.Toplevel):
                 self.entries[key] = ent
             current_row += 1
 
-        divider = tk.Frame(self, height=1, bg="#333333")
-        divider.grid(row=current_row, column=0, columnspan=2, sticky='ew', padx=15, pady=10)
-        current_row += 1
-
-        lbl_startup = tk.Label(self, text="Default Startup Behavior:", bg="#252526", fg="#00ffcc", font=('Helvetica', 9, 'bold'))
-        lbl_startup.grid(row=current_row, column=0, sticky='e', padx=15, pady=4)
-
-        startup_frame = tk.Frame(self, bg="#252526")
-        startup_frame.grid(row=current_row, column=1, sticky='w', padx=15, pady=4)
-
-        self.startup_r1_var = tk.BooleanVar(value=config.CONFIG["STARTUP_POLL_RIG_1"])
-        cb_s1 = ttk.Checkbutton(startup_frame, text="Poll Rig 1 on Boot", variable=self.startup_r1_var)
-        cb_s1.pack(anchor='w', pady=2)
-
-        self.startup_r2_var = tk.BooleanVar(value=config.CONFIG["STARTUP_POLL_RIG_2"])
-        cb_s2 = ttk.Checkbutton(startup_frame, text="Poll Rig 2 on Boot", variable=self.startup_r2_var)
-        cb_s2.pack(anchor='w', pady=2)
-        current_row += 1
-
         btn_frame = tk.Frame(self, bg="#252526")
         btn_frame.grid(row=current_row, column=0, columnspan=2, pady=20, sticky='ew')
         
@@ -113,9 +96,6 @@ class OptionsDialog(tk.Toplevel):
             config.CONFIG["PORT_RADIO_1"] = p1
             config.CONFIG["PORT_RADIO_2"] = p2
             config.CONFIG["FREQ_TOLERANCE"] = tol
-            
-            config.CONFIG["STARTUP_POLL_RIG_1"] = self.startup_r1_var.get()
-            config.CONFIG["STARTUP_POLL_RIG_2"] = self.startup_r2_var.get()
 
             self.master.update_labels_from_config()
             config.fldigi_blackout_until = time.time() + 1.0
@@ -131,7 +111,7 @@ class BridgeGUIApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("OmniRig - Fldigi - Wavelog Configurable Bridge")
-        self.geometry("780x630")
+        self.geometry("820x565")
         self.configure(bg="#1e1e1e")
         
         self.style = ttk.Style()
@@ -139,15 +119,16 @@ class BridgeGUIApp(tk.Tk):
         self.style.configure('.', background='#1e1e1e', foreground='#ffffff')
         self.style.configure('TLabelframe', background='#1e1e1e', foreground='#ffffff', bordercolor='#333333')
         self.style.configure('TLabelframe.Label', background='#1e1e1e', foreground='#00ffcc', font=('Helvetica', 10, 'bold'))
-        self.style.configure('TCheckbutton', background='#1e1e1e', foreground='#ffffff', font=('Helvetica', 9))
         self.style.configure('TCombobox', fieldbackground='#2d2d2d', background='#2d2d2d', foreground='#ffffff')
         
         config._app_instance = self
+        
+        # Ensure individual radio polling loops default to active state when master switch is enabled
+        config.rig_polling_enabled[1] = True
+        config.rig_polling_enabled[2] = True
+        
         self.create_widgets()
         self.protocol("WM_DELETE_WINDOW", self.on_close)
-        
-        self.reg1_enabled_var.set(config.rig_polling_enabled[1])
-        self.reg2_enabled_var.set(config.rig_polling_enabled[2])
         
         self.update_gui_indicators()
 
@@ -194,20 +175,21 @@ class BridgeGUIApp(tk.Tk):
         btn_row = tk.Frame(ops_lf, bg="#1e1e1e")
         btn_row.pack(fill='x', padx=10, pady=6, side='bottom')
 
-        btn_options = tk.Button(btn_row, text="⚙️ Options...", bg="#3a3a3a", fg="white",
+        btn_options = tk.Button(btn_row, text="⚙️ Options", bg="#3a3a3a", fg="white",
                                 font=('Helvetica', 9, 'bold'), relief='flat', overrelief='groove',
                                 command=self.open_options_dialog)
         btn_options.pack(side='left', expand=True, fill='x', padx=2)
 
-        btn_omni_settings = tk.Button(btn_row, text="📻 OmniRig Setup", bg="#3a3a3a", fg="white",
+        btn_omni_settings = tk.Button(btn_row, text="📻 Omnirig Setup", bg="#3a3a3a", fg="white",
                                       font=('Helvetica', 9, 'bold'), relief='flat', overrelief='groove',
                                       command=self.open_omnirig_dialog)
         btn_omni_settings.pack(side='left', expand=True, fill='x', padx=2)
 
-        btn_kill_omni = tk.Button(btn_row, text="💥 Kill OmniRig", bg="#b71c1c", fg="white", 
-                                  font=('Helvetica', 9, 'bold'), relief='flat', overrelief='groove',
-                                  command=self.force_kill_omni_process)
-        btn_kill_omni.pack(side='right', expand=True, fill='x', padx=2)
+        # Global Master On/Off Button
+        self.btn_toggle_omni = tk.Button(btn_row, text="🟢 OmniRig: Enabled", bg="#1b5e20", fg="white",
+                                         font=('Helvetica', 9, 'bold'), relief='flat', overrelief='groove',
+                                         command=self.toggle_omnirig_global)
+        self.btn_toggle_omni.pack(side='left', expand=True, fill='x', padx=2)
 
         cards_frame = tk.Frame(self, bg="#1e1e1e")
         cards_frame.pack(fill='x', padx=15, pady=5)
@@ -215,44 +197,24 @@ class BridgeGUIApp(tk.Tk):
         # Rig 1 Visual Panel Block
         self.rig1_lf = ttk.LabelFrame(cards_frame, text=" RIG 1 ")
         self.rig1_lf.pack(side='left', fill='both', expand=True, padx=5, pady=5)
-        
-        r1_status_bar = tk.Frame(self.rig1_lf, bg="#1e1e1e")
-        r1_status_bar.pack(fill='x', padx=10, pady=2)
-        self.canvas_r1_hw = tk.Canvas(r1_status_bar, width=10, height=10, bg="#1e1e1e", highlightthickness=0)
-        self.canvas_r1_hw.pack(side='left', padx=(5, 2))
-        self.lbl_r1_status_text = tk.Label(r1_status_bar, text="Polling Idle", bg="#1e1e1e", fg="#aaaaaa", font=('Helvetica', 8))
-        self.lbl_r1_status_text.pack(side='left')
 
         self.lbl_r1_freq = tk.Label(self.rig1_lf, text="0.000.000 MHz", font=('Courier New', 16, 'bold'), bg="#1e1e1e", fg="#ffffff")
-        self.lbl_r1_freq.pack(pady=2)
-        self.lbl_r1_freq_b = tk.Label(self.rig1_lf, text="VFO-B / Sub: 0.000.000 MHz", font=('Courier New', 11), bg="#1e1e1e", fg="#888888")
+        self.lbl_r1_freq.pack(pady=12)
+        self.lbl_r1_freq_b = tk.Label(self.rig1_lf, text="VFO-B / Sub: --", font=('Courier New', 10), bg="#1e1e1e", fg="#888888")
         self.lbl_r1_freq_b.pack(pady=2)
         self.lbl_r1_mode = tk.Label(self.rig1_lf, text="MODE: --", font=('Helvetica', 10), bg="#1e1e1e", fg="#aaaaaa")
-        self.lbl_r1_mode.pack(pady=2)
-        self.reg1_enabled_var = tk.BooleanVar(value=True)
-        cb_r1 = ttk.Checkbutton(self.rig1_lf, text="Enable OmniRig Polling", variable=self.reg1_enabled_var, command=self.toggle_r1)
-        cb_r1.pack(pady=6)
+        self.lbl_r1_mode.pack(pady=6)
 
         # Rig 2 Visual Panel Block
         self.rig2_lf = ttk.LabelFrame(cards_frame, text=" RIG 2 ")
         self.rig2_lf.pack(side='right', fill='both', expand=True, padx=5, pady=5)
-        
-        r2_status_bar = tk.Frame(self.rig2_lf, bg="#1e1e1e")
-        r2_status_bar.pack(fill='x', padx=10, pady=2)
-        self.canvas_r2_hw = tk.Canvas(r2_status_bar, width=10, height=10, bg="#1e1e1e", highlightthickness=0)
-        self.canvas_r2_hw.pack(side='left', padx=(5, 2))
-        self.lbl_r2_status_text = tk.Label(r2_status_bar, text="Polling Idle", bg="#1e1e1e", fg="#aaaaaa", font=('Helvetica', 8))
-        self.lbl_r2_status_text.pack(side='left')
 
         self.lbl_r2_freq = tk.Label(self.rig2_lf, text="0.000.000 MHz", font=('Courier New', 16, 'bold'), bg="#1e1e1e", fg="#ffffff")
-        self.lbl_r2_freq.pack(pady=2)
-        self.lbl_r2_freq_b = tk.Label(self.rig2_lf, text="VFO-B / Sub: 0.000.000 MHz", font=('Courier New', 11), bg="#1e1e1e", fg="#888888")
+        self.lbl_r2_freq.pack(pady=12)
+        self.lbl_r2_freq_b = tk.Label(self.rig2_lf, text="VFO-B / Sub: --", font=('Courier New', 10), bg="#1e1e1e", fg="#888888")
         self.lbl_r2_freq_b.pack(pady=2)
         self.lbl_r2_mode = tk.Label(self.rig2_lf, text="MODE: --", font=('Helvetica', 10), bg="#1e1e1e", fg="#aaaaaa")
-        self.lbl_r2_mode.pack(pady=2)
-        self.reg2_enabled_var = tk.BooleanVar(value=True)
-        cb_r2 = ttk.Checkbutton(self.rig2_lf, text="Enable OmniRig Polling", variable=self.reg2_enabled_var, command=self.toggle_r2)
-        cb_r2.pack(pady=6)
+        self.lbl_r2_mode.pack(pady=6)
 
         log_lf = ttk.LabelFrame(self, text=" LIVE SYSTEM ACTIVITY LOG ")
         log_lf.pack(fill='both', expand=True, padx=15, pady=10)
@@ -265,9 +227,8 @@ class BridgeGUIApp(tk.Tk):
         OptionsDialog(self)
 
     def open_omnirig_dialog(self):
-        config.ui_print("⚙️ Requesting OmniRig Settings Dialog...")
+        config.ui_print("⚙️ Requesting OmniRig Settings Setup Interface App...")
         def run():
-            import subprocess
             paths = [
                 r"C:\Program Files (x86)\Afreet\OmniRig\OmniRig.exe",
                 r"C:\Program Files\Afreet\OmniRig\OmniRig.exe"
@@ -277,33 +238,14 @@ class BridgeGUIApp(tk.Tk):
                 if os.path.exists(p):
                     exe_path = p
                     break
-            
-            if not exe_path:
-                try:
-                    import winreg
-                    for view in [0, winreg.KEY_WOW64_32KEY, winreg.KEY_WOW64_64KEY]:
-                        try:
-                            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Afreet\OmniRig", 0, winreg.KEY_READ | view)
-                            val, _ = winreg.QueryValueEx(key, "Path")
-                            winreg.CloseKey(key)
-                            if val:
-                                candidate = os.path.join(val, "OmniRig.exe")
-                                if os.path.exists(candidate):
-                                    exe_path = candidate
-                                    break
-                        except OSError:
-                            pass
-                except Exception:
-                    pass
-            
             if exe_path:
                 try:
                     subprocess.Popen([exe_path])
-                    config.ui_print(f"✅ OmniRig settings program launched: {exe_path}")
+                    config.ui_print(f"✅ Executed OmniRig sub-app setup: {exe_path}")
                 except Exception as e:
-                    config.ui_print(f"❌ Failed to launch OmniRig executable: {e}")
+                    config.ui_print(f"❌ Execution failed: {e}")
             else:
-                config.ui_print("❌ OmniRig executable not found on this system.")
+                config.ui_print("❌ Could not locate OmniRig.exe setup app paths.")
         threading.Thread(target=run, daemon=True).start()
 
     def update_labels_from_config(self):
@@ -315,8 +257,26 @@ class BridgeGUIApp(tk.Tk):
         self.combo_target['values'] = [r1_val, r2_val]
         self.combo_target.set(r1_val if config.current_fldigi_target_rig == 1 else r2_val)
 
-    def toggle_r1(self): config.rig_polling_enabled[1] = self.reg1_enabled_var.get()
-    def toggle_r2(self): config.rig_polling_enabled[2] = self.reg2_enabled_var.get()
+    def toggle_omnirig_global(self):
+        config.omnirig_global_enabled = not config.omnirig_global_enabled
+        if config.omnirig_global_enabled:
+            self.btn_toggle_omni.config(text="🟢 OmniRig: Enabled", bg="#1b5e20")
+            config.ui_print("⚙️ Master Switch: OmniRig integration global sub-layer ENABLED.")
+        else:
+            self.btn_toggle_omni.config(text="🔴 OmniRig: Disabled", bg="#b71c1c")
+            config.ui_print("⚙️ Master Switch: OmniRig integration global sub-layer DISABLED.")
+        self.evaluate_omnirig_process_rules()
+
+    def evaluate_omnirig_process_rules(self):
+        """Sends clean state change tasks into the worker queue based on master context variables."""
+        if not config.omnirig_global_enabled:
+            config.ui_print("🛑 OmniRig processing stopped. Issuing direct hard-kill command sequence...")
+            with config.queue_lock:
+                config.tune_queue.append((0, 0, "KILL_OMNIRIG", "system"))
+        else:
+            config.ui_print("🔄 Actively spinning up / recycling OmniRig driver instance connection context...")
+            with config.queue_lock:
+                config.tune_queue.append((0, 0, "RESTART_OMNIRIG", "system"))
 
     def on_fldigi_target_changed(self, event):
         val = self.combo_target.get()
@@ -324,15 +284,15 @@ class BridgeGUIApp(tk.Tk):
         config.fldigi_blackout_until = time.time() + 1.0
         self.update_labels_from_config()
         config.ui_print(f"🎯 Fldigi sync target route changed to: Rig {config.current_fldigi_target_rig}")
-
-    def force_kill_omni_process(self):
-        if messagebox.askyesno("Confirm Process Kill", "Are you sure you want to force terminate OmniRig.exe?"):
-            try:
-                if os.system("taskkill /f /im OmniRig.exe") == 0:
-                    config.ui_print("✅ Process OmniRig.exe terminated.")
-                else:
-                    config.ui_print("⚠️ Request dispatched.")
-            except Exception as e: config.ui_print(f"❌ Operation failed: {e}")
+        
+        target_rig = config.current_fldigi_target_rig
+        freq_to_push = config.last_freqs[target_rig]
+        mode_code = config.last_modes[target_rig]
+        friendly_mode = config.OMNIRIG_MODES.get(mode_code, "USB")
+        
+        if freq_to_push > 0:
+            config.ui_print(f"🔄 Sync Target Shifted: Immediately sending Rig {target_rig} VFO ({freq_to_push} Hz) to Fldigi...")
+            threading.Thread(target=network_workers.sync_to_fldigi, args=(freq_to_push, friendly_mode), daemon=True).start()
 
     def draw_status_dot(self, canvas, color):
         canvas.delete("all")
@@ -345,49 +305,25 @@ class BridgeGUIApp(tk.Tk):
         self.after(0, append)
 
     def update_gui_indicators(self):
-        # Update Rig 1 Interface Elements
-        if config.rig_polling_enabled[1]:
-            f1, f1_b = config.last_freqs[1], config.last_freqs_b[1]
-            m1 = config.OMNIRIG_MODES.get(config.last_modes[1], "--") if config.last_modes[1] else "--"
-            if f1 > 0:
-                self.lbl_r1_freq.config(text=f"{f1 / 1_000_000:,.6f} MHz", fg="#ffffff")
-                self.lbl_r1_mode.config(text=f"MODE: {m1}")
-            self.lbl_r1_freq_b.config(text=f"VFO-B: {f1_b / 1_000_000:,.6f} MHz" if f1_b > 0 else "VFO-B: --.------ MHz", fg="#00ffcc" if f1_b > 0 else "#aaaaaa")
-            
-            if config.status_states["rig1_hw"] == "online":
-                self.draw_status_dot(self.canvas_r1_hw, "#00ff00")
-                self.lbl_r1_status_text.config(text="Live Polling Connected", fg="#00ff00")
-            else:
-                self.draw_status_dot(self.canvas_r1_hw, "#ff0000")
-                self.lbl_r1_status_text.config(text="Offline / No CAT Data", fg="#ff4444")
+        f1, f1_b = config.last_freqs[1], config.last_freqs_b[1]
+        m1 = config.OMNIRIG_MODES.get(config.last_modes[1], "--") if config.last_modes[1] else "--"
+        if f1 > 0:
+            self.lbl_r1_freq.config(text=f"{f1 / 1_000_000:,.6f} MHz")
+            self.lbl_r1_mode.config(text=f"MODE: {m1}")
         else:
-            self.lbl_r1_freq.config(text="PAUSED / DISABLED", fg="#ff4444")
-            self.lbl_r1_freq_b.config(text="VFO-B: --", fg="#ff4444")
+            self.lbl_r1_freq.config(text="0.000.000 MHz")
             self.lbl_r1_mode.config(text="MODE: --")
-            self.draw_status_dot(self.canvas_r1_hw, "#555555")
-            self.lbl_r1_status_text.config(text="Polling Manually Disabled", fg="#777777")
+        self.lbl_r1_freq_b.config(text=f"VFO-B: {f1_b / 1_000_000:,.6f} MHz" if f1_b > 0 else "VFO-B: --", fg="#00ffcc" if f1_b > 0 else "#aaaaaa")
 
-        # Update Rig 2 Interface Elements
-        if config.rig_polling_enabled[2]:
-            f2, f2_b = config.last_freqs[2], config.last_freqs_b[2]
-            m2 = config.OMNIRIG_MODES.get(config.last_modes[2], "--") if config.last_modes[2] else "--"
-            if f2 > 0:
-                self.lbl_r2_freq.config(text=f"{f2 / 1_000_000:,.6f} MHz", fg="#ffffff")
-                self.lbl_r2_mode.config(text=f"MODE: {m2}")
-            self.lbl_r2_freq_b.config(text=f"VFO-B: {f2_b / 1_000_000:,.6f} MHz" if f2_b > 0 else "VFO-B: --.------ MHz", fg="#00ffcc" if f2_b > 0 else "#aaaaaa")
-            
-            if config.status_states["rig2_hw"] == "online":
-                self.draw_status_dot(self.canvas_r2_hw, "#00ff00")
-                self.lbl_r2_status_text.config(text="Live Polling Connected", fg="#00ff00")
-            else:
-                self.draw_status_dot(self.canvas_r2_hw, "#ff0000")
-                self.lbl_r2_status_text.config(text="Offline / No CAT Data", fg="#ff4444")
+        f2, f2_b = config.last_freqs[2], config.last_freqs_b[2]
+        m2 = config.OMNIRIG_MODES.get(config.last_modes[2], "--") if config.last_modes[2] else "--"
+        if f2 > 0:
+            self.lbl_r2_freq.config(text=f"{f2 / 1_000_000:,.6f} MHz")
+            self.lbl_r2_mode.config(text=f"MODE: {m2}")
         else:
-            self.lbl_r2_freq.config(text="PAUSED / DISABLED", fg="#ff4444")
-            self.lbl_r2_freq_b.config(text="VFO-B: --", fg="#ff4444")
+            self.lbl_r2_freq.config(text="0.000.000 MHz")
             self.lbl_r2_mode.config(text="MODE: --")
-            self.draw_status_dot(self.canvas_r2_hw, "#555555")
-            self.lbl_r2_status_text.config(text="Polling Manually Disabled", fg="#777777")
+        self.lbl_r2_freq_b.config(text=f"VFO-B: {f2_b / 1_000_000:,.6f} MHz" if f2_b > 0 else "VFO-B: --", fg="#00ffcc" if f2_b > 0 else "#aaaaaa")
 
         self.draw_status_dot(self.canvas_omni, "#00ff00" if config.status_states["omnirig"] == "online" else "#ff0000")
         self.lbl_omni.config(text="OmniRig: Connected" if config.status_states["omnirig"] == "online" else "OmniRig: Offline", fg="#ffffff" if config.status_states["omnirig"] == "online" else "#ff8888")

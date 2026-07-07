@@ -4,6 +4,16 @@ import win32com.client
 import pythoncom
 import config
 import network_workers
+import os
+
+def kill_omnirig_process_hard():
+    """Locates and terminates OmniRig.exe process directly to clear COM hardware line holds."""
+    try:
+        import subprocess
+        subprocess.run("taskkill /f /im OmniRig.exe", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        config.ui_print("💥 OmniRig process terminated hard. COM ports released.")
+    except Exception as e:
+        config.ui_print(f"⚠️ Error executing process cleanup: {e}")
 
 def omnirig_worker_thread():
     pythoncom.CoInitializeEx(pythoncom.COINIT_MULTITHREADED)
@@ -12,15 +22,22 @@ def omnirig_worker_thread():
 
     while True:
         current_time = time.time()
+        
         if omnirig is None:
+            # Standby state if master execution switch or individual radio bounds are inactive
+            if not config.omnirig_global_enabled or (not config.rig_polling_enabled[1] and not config.rig_polling_enabled[2]):
+                config.status_states["omnirig"] = "offline"
+                config.status_states["rig1_hw"] = "offline"
+                config.status_states["rig2_hw"] = "offline"
+                time.sleep(1.0)
+                continue
+                
             try:
                 try: omnirig = win32com.client.gencache.EnsureDispatch("OmniRig.OmniRigX")
                 except: omnirig = win32com.client.Dispatch("OmniRig.OmniRigX")
                 config.status_states["omnirig"] = "online"
             except Exception:
                 config.status_states["omnirig"] = "offline"
-                config.status_states["rig1_hw"] = "offline"
-                config.status_states["rig2_hw"] = "offline"
                 time.sleep(2.0)
                 continue
 
@@ -33,7 +50,21 @@ def omnirig_worker_thread():
                 origin = queue_item[3]
                 target_vfo = queue_item[4].upper() if len(queue_item) > 4 else "A"
                 
-                if config.rig_polling_enabled[radio_num]:
+                if target_mode == "KILL_OMNIRIG":
+                    config.ui_print("🛑 Purging OmniRig engine instance...")
+                    omnirig = None
+                    time.sleep(0.1)
+                    kill_omnirig_process_hard()
+                    continue
+                    
+                if target_mode == "RESTART_OMNIRIG":
+                    config.ui_print("♻️ Re-initializing OmniRig engine context...")
+                    omnirig = None
+                    time.sleep(0.1)
+                    kill_omnirig_process_hard()
+                    continue
+                
+                if config.omnirig_global_enabled and config.rig_polling_enabled[radio_num] and omnirig:
                     try:
                         target_freq_int = int(target_freq)
                         rig_obj = omnirig.Rig1 if radio_num == 1 else omnirig.Rig2
@@ -66,18 +97,15 @@ def omnirig_worker_thread():
                         config.status_states["omnirig"] = "offline"
                         omnirig = None
 
-        # Tracking Physical Hardware VFO Dial Updates
-        if current_time > config.rig_blackout_until and omnirig:
-            # Rig 1 Monitoring Loop
+        # Process Physical VFO Polling loops if master context bounds permit
+        if current_time > config.rig_blackout_until and omnirig and config.omnirig_global_enabled:
+            # Polling Routine: Rig 1
             if config.rig_polling_enabled[1]:
                 try:
                     r1_freq = omnirig.Rig1.Freq
                     r1_mode = omnirig.Rig1.Mode
                     r1_freq_b = omnirig.Rig1.FreqB
                     config.status_states["omnirig"] = "online"
-                    
-                    # If frequency reads exactly 0, the transceiver's main CPU is offline/powered down
-                    config.status_states["rig1_hw"] = "online" if r1_freq > 0 else "offline"
                     
                     if r1_freq > 0 and (abs(r1_freq - config.last_freqs[1]) > config.CONFIG["FREQ_TOLERANCE"] or r1_mode != config.last_modes[1]):
                         friendly_mode = config.OMNIRIG_MODES.get(r1_mode, "USB")
@@ -93,20 +121,15 @@ def omnirig_worker_thread():
                         config.last_freqs_b[1] = r1_freq_b
                 except: 
                     config.status_states["omnirig"] = "offline"
-                    config.status_states["rig1_hw"] = "offline"
                     omnirig = None
-            else:
-                config.status_states["rig1_hw"] = "offline"
 
-            # Rig 2 Monitoring Loop
+            # Polling Routine: Rig 2
             if config.rig_polling_enabled[2] and omnirig:
                 try:
                     r2_freq = omnirig.Rig2.Freq
                     r2_mode = omnirig.Rig2.Mode
                     r2_freq_b = omnirig.Rig2.FreqB
                     config.status_states["omnirig"] = "online"
-                    
-                    config.status_states["rig2_hw"] = "online" if r2_freq > 0 else "offline"
                     
                     if r2_freq > 0 and (abs(r2_freq - config.last_freqs[2]) > config.CONFIG["FREQ_TOLERANCE"] or r2_mode != config.last_modes[2]):
                         friendly_mode = config.OMNIRIG_MODES.get(r2_mode, "USB")
@@ -122,9 +145,6 @@ def omnirig_worker_thread():
                         config.last_freqs_b[2] = r2_freq_b
                 except: 
                     config.status_states["omnirig"] = "offline"
-                    config.status_states["rig2_hw"] = "offline"
                     omnirig = None
-            else:
-                config.status_states["rig2_hw"] = "offline"
                 
         time.sleep(config.CONFIG["POLL_INTERVAL"])
