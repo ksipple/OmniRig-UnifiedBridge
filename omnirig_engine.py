@@ -10,7 +10,8 @@ def kill_omnirig_process_hard():
     """Locates and terminates OmniRig.exe process directly to clear COM hardware line holds."""
     try:
         import subprocess
-        subprocess.run("taskkill /f /im OmniRig.exe", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Use taskkill with force filter to bypass locked engine threads
+        subprocess.run("taskkill /f /im OmniRig.exe", shell=True, stdout=subprocess.DEVNULL, stderr=DEVNULL)
         config.ui_print("💥 OmniRig process terminated hard. COM ports released.")
     except Exception as e:
         config.ui_print(f"⚠️ Error executing process cleanup: {e}")
@@ -23,9 +24,9 @@ def omnirig_worker_thread():
     while True:
         current_time = time.time()
         
+        # Build fresh link if none exists or if it was cleared
         if omnirig is None:
-            # Standby state if master execution switch or individual radio bounds are inactive
-            if not config.omnirig_global_enabled or (not config.rig_polling_enabled[1] and not config.rig_polling_enabled[2]):
+            if not config.rig_polling_enabled[1] and not config.rig_polling_enabled[2]:
                 config.status_states["omnirig"] = "offline"
                 config.status_states["rig1_hw"] = "offline"
                 config.status_states["rig2_hw"] = "offline"
@@ -38,6 +39,8 @@ def omnirig_worker_thread():
                 config.status_states["omnirig"] = "online"
             except Exception:
                 config.status_states["omnirig"] = "offline"
+                config.status_states["rig1_hw"] = "offline"
+                config.status_states["rig2_hw"] = "offline"
                 time.sleep(2.0)
                 continue
 
@@ -64,7 +67,7 @@ def omnirig_worker_thread():
                     kill_omnirig_process_hard()
                     continue
                 
-                if config.omnirig_global_enabled and config.rig_polling_enabled[radio_num] and omnirig:
+                if config.rig_polling_enabled[radio_num] and omnirig:
                     try:
                         target_freq_int = int(target_freq)
                         rig_obj = omnirig.Rig1 if radio_num == 1 else omnirig.Rig2
@@ -92,59 +95,92 @@ def omnirig_worker_thread():
                                 rig_obj.FreqA = target_freq_int; time.sleep(0.25); rig_obj.Mode = mode_code; time.sleep(0.05); rig_obj.Freq = target_freq_int 
                             config.last_freqs[radio_num] = target_freq_int
                             config.last_modes[radio_num] = mode_code
+                            config.last_wavelog_push_time[radio_num] = current_time
                     except Exception as e:
                         config.ui_print(f"❌ Tuning failed: {e}")
                         config.status_states["omnirig"] = "offline"
                         omnirig = None
 
-        # Process Physical VFO Polling loops if master context bounds permit
-        if current_time > config.rig_blackout_until and omnirig and config.omnirig_global_enabled:
-            # Polling Routine: Rig 1
+        # Tracking Physical Hardware VFO Dial Updates
+        if current_time > config.rig_blackout_until and omnirig:
+            # Rig 1 Monitoring Loop
             if config.rig_polling_enabled[1]:
                 try:
                     r1_freq = omnirig.Rig1.Freq
                     r1_mode = omnirig.Rig1.Mode
                     r1_freq_b = omnirig.Rig1.FreqB
                     config.status_states["omnirig"] = "online"
+                    config.status_states["rig1_hw"] = "online" if r1_freq > 0 else "offline"
                     
-                    if r1_freq > 0 and (abs(r1_freq - config.last_freqs[1]) > config.CONFIG["FREQ_TOLERANCE"] or r1_mode != config.last_modes[1]):
-                        friendly_mode = config.OMNIRIG_MODES.get(r1_mode, "USB")
-                        config.ui_print(f"[{config.CONFIG['RADIO_1_NAME']} Dial Move] {r1_freq} Hz")
+                    friendly_mode = config.OMNIRIG_MODES.get(r1_mode, "USB")
+
+                    # Handle explicit change OR maximum time interval timeout
+                    is_changed = (r1_freq > 0 and (abs(r1_freq - config.last_freqs[1]) > config.CONFIG["FREQ_TOLERANCE"] or r1_mode != config.last_modes[1]))
+                    is_timeout = (current_time - config.last_wavelog_push_time[1] > config.CONFIG["WAVELOG_MAX_INTERVAL"])
+                    
+                    if is_changed or (r1_freq > 0 and is_timeout):
+                        if is_timeout and not is_changed:
+                            config.ui_print(f"⏳ [{config.CONFIG['RADIO_1_NAME']} Heartbeat] Pushing keeping-alive state context...")
+                        else:
+                            config.ui_print(f"[{config.CONFIG['RADIO_1_NAME']} Dial Move] {r1_freq} Hz")
+                            
                         threading.Thread(target=network_workers.post_to_wavelog_api, args=(config.CONFIG["RADIO_1_NAME"], r1_freq, friendly_mode), daemon=True).start()
-                        if config.current_fldigi_target_rig == 1:
+                        
+                        if config.current_fldigi_target_rig == 1 and is_changed:
                             config.fldigi_blackout_until = current_time + 1.5
                             threading.Thread(target=network_workers.sync_to_fldigi, args=(r1_freq, friendly_mode), daemon=True).start()
+                            
                         config.last_freqs[1] = r1_freq; config.last_modes[1] = r1_mode
+                        config.last_wavelog_push_time[1] = current_time
                         
                     if r1_freq_b > 0 and abs(r1_freq_b - config.last_freqs_b[1]) > config.CONFIG["FREQ_TOLERANCE"]:
                         config.ui_print(f"[{config.CONFIG['RADIO_1_NAME']} VFO-B Change] {r1_freq_b} Hz")
                         config.last_freqs_b[1] = r1_freq_b
                 except: 
                     config.status_states["omnirig"] = "offline"
+                    config.status_states["rig1_hw"] = "offline"
                     omnirig = None
+            else:
+                config.status_states["rig1_hw"] = "offline"
 
-            # Polling Routine: Rig 2
+            # Rig 2 Monitoring Loop
             if config.rig_polling_enabled[2] and omnirig:
                 try:
                     r2_freq = omnirig.Rig2.Freq
                     r2_mode = omnirig.Rig2.Mode
                     r2_freq_b = omnirig.Rig2.FreqB
                     config.status_states["omnirig"] = "online"
+                    config.status_states["rig2_hw"] = "online" if r2_freq > 0 else "offline"
                     
-                    if r2_freq > 0 and (abs(r2_freq - config.last_freqs[2]) > config.CONFIG["FREQ_TOLERANCE"] or r2_mode != config.last_modes[2]):
-                        friendly_mode = config.OMNIRIG_MODES.get(r2_mode, "USB")
-                        config.ui_print(f"[{config.CONFIG['RADIO_2_NAME']} Dial Move] {r2_freq} Hz")
+                    friendly_mode = config.OMNIRIG_MODES.get(r2_mode, "USB")
+
+                    # Handle explicit change OR maximum time interval timeout
+                    is_changed = (r2_freq > 0 and (abs(r2_freq - config.last_freqs[2]) > config.CONFIG["FREQ_TOLERANCE"] or r2_mode != config.last_modes[2]))
+                    is_timeout = (current_time - config.last_wavelog_push_time[2] > config.CONFIG["WAVELOG_MAX_INTERVAL"])
+                    
+                    if is_changed or (r2_freq > 0 and is_timeout):
+                        if is_timeout and not is_changed:
+                            config.ui_print(f"⏳ [{config.CONFIG['RADIO_2_NAME']} Heartbeat] Pushing keeping-alive state context...")
+                        else:
+                            config.ui_print(f"[{config.CONFIG['RADIO_2_NAME']} Dial Move] {r2_freq} Hz")
+                            
                         threading.Thread(target=network_workers.post_to_wavelog_api, args=(config.CONFIG["RADIO_2_NAME"], r2_freq, friendly_mode), daemon=True).start()
-                        if config.current_fldigi_target_rig == 2:
+                        
+                        if config.current_fldigi_target_rig == 2 and is_changed:
                             config.fldigi_blackout_until = current_time + 1.5
                             threading.Thread(target=network_workers.sync_to_fldigi, args=(r2_freq, friendly_mode), daemon=True).start()
+                            
                         config.last_freqs[2] = r2_freq; config.last_modes[2] = r2_mode
+                        config.last_wavelog_push_time[2] = current_time
                         
                     if r2_freq_b > 0 and abs(r2_freq_b - config.last_freqs_b[2]) > config.CONFIG["FREQ_TOLERANCE"]:
                         config.ui_print(f"[{config.CONFIG['RADIO_2_NAME']} VFO-B Change] {r2_freq_b} Hz")
                         config.last_freqs_b[2] = r2_freq_b
                 except: 
                     config.status_states["omnirig"] = "offline"
+                    config.status_states["rig2_hw"] = "offline"
                     omnirig = None
+            else:
+                config.status_states["rig2_hw"] = "offline"
                 
         time.sleep(config.CONFIG["POLL_INTERVAL"])

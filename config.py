@@ -1,6 +1,7 @@
 import os
 import json
 import threading
+import time
 
 # Dynamic Configuration Map
 CONFIG = {
@@ -14,7 +15,8 @@ CONFIG = {
     "PORT_RADIO_1": 54321,
     "PORT_RADIO_2": 54322,
     "POLL_INTERVAL": 0.2,
-    "FREQ_TOLERANCE": 10
+    "FREQ_TOLERANCE": 10,
+    "WAVELOG_MAX_INTERVAL": 60  # Added parameter for max time without updates
 }
 
 def load_config():
@@ -58,13 +60,14 @@ queue_lock = threading.Lock()
 last_freqs = {1: 0, 2: 0}
 last_freqs_b = {1: 0, 2: 0}
 last_modes = {1: 0, 2: 0}
+last_wavelog_push_time = {1: 0, 2: 0}  # Track heartbeat intervals
 
 rig_blackout_until = 0
 fldigi_blackout_until = 0
 last_pushed_to_fldigi = 0
 
 # Master tracking flags
-omnirig_global_enabled = True  # Added to prevent the AttributeError
+omnirig_global_enabled = True  
 rig_polling_enabled = {1: True, 2: True}
 
 status_states = {

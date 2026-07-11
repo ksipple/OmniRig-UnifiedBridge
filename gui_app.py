@@ -11,7 +11,7 @@ class OptionsDialog(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("Bridge Settings & Parameters")
-        self.geometry("450x430")  # Adjusted down due to removed elements
+        self.geometry("450x465")  
         self.configure(bg="#252526")
         self.transient(parent)
         self.grab_set()
@@ -32,7 +32,8 @@ class OptionsDialog(tk.Toplevel):
             ("RADIO_2_NAME", "Rig 2 Radio Name:"),
             ("PORT_RADIO_1", "Rig 1 TCP Inbound Port:"),
             ("PORT_RADIO_2", "Rig 2 TCP Inbound Port:"),
-            ("FREQ_TOLERANCE", "Frequency Sync Tolerance (Hz):")
+            ("FREQ_TOLERANCE", "Frequency Sync Tolerance (Hz):"),
+            ("WAVELOG_MAX_INTERVAL", "Max Time Without Wavelog Update (s):")
         ]
 
         current_row = 1
@@ -86,6 +87,7 @@ class OptionsDialog(tk.Toplevel):
             p1 = int(self.entries["PORT_RADIO_1"].get())
             p2 = int(self.entries["PORT_RADIO_2"].get())
             tol = int(self.entries["FREQ_TOLERANCE"].get())
+            w_max = int(self.entries["WAVELOG_MAX_INTERVAL"].get())
             
             config.CONFIG["FLDIGI_URL"] = self.entries["FLDIGI_URL"].get().strip()
             config.CONFIG["FORCE_MODE_SELECTION"] = self.entries["FORCE_MODE_SELECTION"].get().strip()
@@ -96,6 +98,7 @@ class OptionsDialog(tk.Toplevel):
             config.CONFIG["PORT_RADIO_1"] = p1
             config.CONFIG["PORT_RADIO_2"] = p2
             config.CONFIG["FREQ_TOLERANCE"] = tol
+            config.CONFIG["WAVELOG_MAX_INTERVAL"] = w_max
 
             self.master.update_labels_from_config()
             config.fldigi_blackout_until = time.time() + 1.0
@@ -104,14 +107,14 @@ class OptionsDialog(tk.Toplevel):
             config.ui_print("⚙️ Configuration maps updated and saved to config.json.")
             self.destroy()
         except ValueError:
-            messagebox.showerror("Validation Error", "Ports and Tolerance properties must be valid integers.")
+            messagebox.showerror("Validation Error", "Ports, Tolerance, and Max Interval must be valid integers.")
 
 
 class BridgeGUIApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("OmniRig - Fldigi - Wavelog Configurable Bridge")
-        self.geometry("820x565")
+        self.geometry("820x595")
         self.configure(bg="#1e1e1e")
         
         self.style = ttk.Style()
@@ -122,10 +125,6 @@ class BridgeGUIApp(tk.Tk):
         self.style.configure('TCombobox', fieldbackground='#2d2d2d', background='#2d2d2d', foreground='#ffffff')
         
         config._app_instance = self
-        
-        # Ensure individual radio polling loops default to active state when master switch is enabled
-        config.rig_polling_enabled[1] = True
-        config.rig_polling_enabled[2] = True
         
         self.create_widgets()
         self.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -199,22 +198,30 @@ class BridgeGUIApp(tk.Tk):
         self.rig1_lf.pack(side='left', fill='both', expand=True, padx=5, pady=5)
 
         self.lbl_r1_freq = tk.Label(self.rig1_lf, text="0.000.000 MHz", font=('Courier New', 16, 'bold'), bg="#1e1e1e", fg="#ffffff")
-        self.lbl_r1_freq.pack(pady=12)
+        self.lbl_r1_freq.pack(pady=8)
         self.lbl_r1_freq_b = tk.Label(self.rig1_lf, text="VFO-B / Sub: --", font=('Courier New', 10), bg="#1e1e1e", fg="#888888")
         self.lbl_r1_freq_b.pack(pady=2)
         self.lbl_r1_mode = tk.Label(self.rig1_lf, text="MODE: --", font=('Helvetica', 10), bg="#1e1e1e", fg="#aaaaaa")
-        self.lbl_r1_mode.pack(pady=6)
+        self.lbl_r1_mode.pack(pady=4)
+        
+        self.btn_poll_r1 = tk.Button(self.rig1_lf, text="Polling: Active", bg="#1b5e20", fg="white", 
+                                     font=('Helvetica', 8, 'bold'), relief='flat', command=lambda: self.toggle_rig_polling(1))
+        self.btn_poll_r1.pack(pady=6)
 
         # Rig 2 Visual Panel Block
         self.rig2_lf = ttk.LabelFrame(cards_frame, text=" RIG 2 ")
         self.rig2_lf.pack(side='right', fill='both', expand=True, padx=5, pady=5)
 
         self.lbl_r2_freq = tk.Label(self.rig2_lf, text="0.000.000 MHz", font=('Courier New', 16, 'bold'), bg="#1e1e1e", fg="#ffffff")
-        self.lbl_r2_freq.pack(pady=12)
+        self.lbl_r2_freq.pack(pady=8)
         self.lbl_r2_freq_b = tk.Label(self.rig2_lf, text="VFO-B / Sub: --", font=('Courier New', 10), bg="#1e1e1e", fg="#888888")
         self.lbl_r2_freq_b.pack(pady=2)
         self.lbl_r2_mode = tk.Label(self.rig2_lf, text="MODE: --", font=('Helvetica', 10), bg="#1e1e1e", fg="#aaaaaa")
-        self.lbl_r2_mode.pack(pady=6)
+        self.lbl_r2_mode.pack(pady=4)
+        
+        self.btn_poll_r2 = tk.Button(self.rig2_lf, text="Polling: Active", bg="#1b5e20", fg="white", 
+                                     font=('Helvetica', 8, 'bold'), relief='flat', command=lambda: self.toggle_rig_polling(2))
+        self.btn_poll_r2.pack(pady=6)
 
         log_lf = ttk.LabelFrame(self, text=" LIVE SYSTEM ACTIVITY LOG ")
         log_lf.pack(fill='both', expand=True, padx=15, pady=10)
@@ -256,6 +263,16 @@ class BridgeGUIApp(tk.Tk):
         r2_val = f"Rig 2: {config.CONFIG['RADIO_2_NAME']}"
         self.combo_target['values'] = [r1_val, r2_val]
         self.combo_target.set(r1_val if config.current_fldigi_target_rig == 1 else r2_val)
+
+    def toggle_rig_polling(self, rig_num):
+        config.rig_polling_enabled[rig_num] = not config.rig_polling_enabled[rig_num]
+        btn = self.btn_poll_r1 if rig_num == 1 else self.btn_poll_r2
+        if config.rig_polling_enabled[rig_num]:
+            btn.config(text="Polling: Active", bg="#1b5e20")
+            config.ui_print(f"📡 Polling loop for Rig {rig_num} ENABLED.")
+        else:
+            btn.config(text="Polling: Paused", bg="#b71c1c")
+            config.ui_print(f"🛑 Polling loop for Rig {rig_num} PAUSED.")
 
     def toggle_omnirig_global(self):
         config.omnirig_global_enabled = not config.omnirig_global_enabled
@@ -305,25 +322,35 @@ class BridgeGUIApp(tk.Tk):
         self.after(0, append)
 
     def update_gui_indicators(self):
-        f1, f1_b = config.last_freqs[1], config.last_freqs_b[1]
-        m1 = config.OMNIRIG_MODES.get(config.last_modes[1], "--") if config.last_modes[1] else "--"
-        if f1 > 0:
-            self.lbl_r1_freq.config(text=f"{f1 / 1_000_000:,.6f} MHz")
-            self.lbl_r1_mode.config(text=f"MODE: {m1}")
+        if config.rig_polling_enabled[1]:
+            f1, f1_b = config.last_freqs[1], config.last_freqs_b[1]
+            m1 = config.OMNIRIG_MODES.get(config.last_modes[1], "--") if config.last_modes[1] else "--"
+            if f1 > 0:
+                self.lbl_r1_freq.config(text=f"{f1 / 1_000_000:,.6f} MHz", fg="#ffffff")
+                self.lbl_r1_mode.config(text=f"MODE: {m1}")
+            else:
+                self.lbl_r1_freq.config(text="0.000.000 MHz", fg="#ffffff")
+                self.lbl_r1_mode.config(text="MODE: --")
+            self.lbl_r1_freq_b.config(text=f"VFO-B: {f1_b / 1_000_000:,.6f} MHz" if f1_b > 0 else "VFO-B: --", fg="#00ffcc" if f1_b > 0 else "#aaaaaa")
         else:
-            self.lbl_r1_freq.config(text="0.000.000 MHz")
+            self.lbl_r1_freq.config(text="PAUSED", fg="#ff4444")
+            self.lbl_r1_freq_b.config(text="VFO-B: --", fg="#888888")
             self.lbl_r1_mode.config(text="MODE: --")
-        self.lbl_r1_freq_b.config(text=f"VFO-B: {f1_b / 1_000_000:,.6f} MHz" if f1_b > 0 else "VFO-B: --", fg="#00ffcc" if f1_b > 0 else "#aaaaaa")
 
-        f2, f2_b = config.last_freqs[2], config.last_freqs_b[2]
-        m2 = config.OMNIRIG_MODES.get(config.last_modes[2], "--") if config.last_modes[2] else "--"
-        if f2 > 0:
-            self.lbl_r2_freq.config(text=f"{f2 / 1_000_000:,.6f} MHz")
-            self.lbl_r2_mode.config(text=f"MODE: {m2}")
+        if config.rig_polling_enabled[2]:
+            f2, f2_b = config.last_freqs[2], config.last_freqs_b[2]
+            m2 = config.OMNIRIG_MODES.get(config.last_modes[2], "--") if config.last_modes[2] else "--"
+            if f2 > 0:
+                self.lbl_r2_freq.config(text=f"{f2 / 1_000_000:,.6f} MHz", fg="#ffffff")
+                self.lbl_r2_mode.config(text=f"MODE: {m2}")
+            else:
+                self.lbl_r2_freq.config(text="0.000.000 MHz", fg="#ffffff")
+                self.lbl_r2_mode.config(text="MODE: --")
+            self.lbl_r2_freq_b.config(text=f"VFO-B: {f2_b / 1_000_000:,.6f} MHz" if f2_b > 0 else "VFO-B: --", fg="#00ffcc" if f2_b > 0 else "#aaaaaa")
         else:
-            self.lbl_r2_freq.config(text="0.000.000 MHz")
+            self.lbl_r2_freq.config(text="PAUSED", fg="#ff4444")
+            self.lbl_r2_freq_b.config(text="VFO-B: --", fg="#888888")
             self.lbl_r2_mode.config(text="MODE: --")
-        self.lbl_r2_freq_b.config(text=f"VFO-B: {f2_b / 1_000_000:,.6f} MHz" if f2_b > 0 else "VFO-B: --", fg="#00ffcc" if f2_b > 0 else "#aaaaaa")
 
         self.draw_status_dot(self.canvas_omni, "#00ff00" if config.status_states["omnirig"] == "online" else "#ff0000")
         self.lbl_omni.config(text="OmniRig: Connected" if config.status_states["omnirig"] == "online" else "OmniRig: Offline", fg="#ffffff" if config.status_states["omnirig"] == "online" else "#ff8888")
