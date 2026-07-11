@@ -6,12 +6,13 @@ from tkinter import ttk, scrolledtext, messagebox
 import subprocess
 import config
 import network_workers
+import sdrconnect_worker
 
 class OptionsDialog(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("Bridge Settings & Parameters")
-        self.geometry("450x465")  
+        self.geometry("450x640")  # Expanded slightly to fit all options cleanly
         self.configure(bg="#252526")
         self.transient(parent)
         self.grab_set()
@@ -73,6 +74,44 @@ class OptionsDialog(tk.Toplevel):
                 self.entries[key] = ent
             current_row += 1
 
+        # Poll on Startup checkbox layout adjustments
+        self.var_poll_r1 = tk.BooleanVar(value=config.CONFIG.get("START_POLL_RIG_1", True))
+        lbl_p1 = tk.Label(self, text="Poll Rig 1 on Startup:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
+        lbl_p1.grid(row=current_row, column=0, sticky='e', padx=15, pady=6)
+        chk_p1 = tk.Checkbutton(self, variable=self.var_poll_r1, bg="#252526", activebackground="#252526", selectcolor="#1e1e1e")
+        chk_p1.grid(row=current_row, column=1, sticky='w', padx=15, pady=6)
+        current_row += 1
+
+        self.var_poll_r2 = tk.BooleanVar(value=config.CONFIG.get("START_POLL_RIG_2", True))
+        lbl_p2 = tk.Label(self, text="Poll Rig 2 on Startup:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
+        lbl_p2.grid(row=current_row, column=0, sticky='e', padx=15, pady=6)
+        chk_p2 = tk.Checkbutton(self, variable=self.var_poll_r2, bg="#252526", activebackground="#252526", selectcolor="#1e1e1e")
+        chk_p2.grid(row=current_row, column=1, sticky='w', padx=15, pady=6)
+        current_row += 1
+
+        # SDRconnect UI Inputs
+        self.var_sdr_enabled = tk.BooleanVar(value=config.CONFIG.get("SDRCONNECT_ENABLED", False))
+        lbl_sdr = tk.Label(self, text="Enable SDRconnect WebSocket:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
+        lbl_sdr.grid(row=current_row, column=0, sticky='e', padx=15, pady=6)
+        chk_sdr = tk.Checkbutton(self, variable=self.var_sdr_enabled, bg="#252526", activebackground="#252526", selectcolor="#1e1e1e")
+        chk_sdr.grid(row=current_row, column=1, sticky='w', padx=15, pady=6)
+        current_row += 1
+
+        lbl_sdr_host = tk.Label(self, text="WebSocket Host IP:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
+        lbl_sdr_host.grid(row=current_row, column=0, sticky='e', padx=15, pady=6)
+        self.ent_sdr_host = tk.Entry(self, bg="#1e1e1e", fg="#ffffff", insertbackground='white', relief='flat', font=('Consolas', 9))
+        self.ent_sdr_host.insert(0, str(config.CONFIG.get("SDRCONNECT_HOST", "127.0.0.1")))
+        self.ent_sdr_host.grid(row=current_row, column=1, sticky='ew', padx=15, pady=6)
+        current_row += 1
+
+        lbl_sdr_port = tk.Label(self, text="WebSocket API Port:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
+        lbl_sdr_port.grid(row=current_row, column=0, sticky='e', padx=15, pady=6)
+        self.ent_sdr_port = tk.Entry(self, bg="#1e1e1e", fg="#ffffff", insertbackground='white', relief='flat', font=('Consolas', 9))
+        self.ent_sdr_port.insert(0, str(config.CONFIG.get("SDRCONNECT_PORT", 5454)))
+        self.ent_sdr_port.grid(row=current_row, column=1, sticky='ew', padx=15, pady=6)
+        current_row += 1
+
+        # Save/Cancel Action Buttons (Placed strictly at the bottom)
         btn_frame = tk.Frame(self, bg="#252526")
         btn_frame.grid(row=current_row, column=0, columnspan=2, pady=20, sticky='ew')
         
@@ -88,6 +127,7 @@ class OptionsDialog(tk.Toplevel):
             p2 = int(self.entries["PORT_RADIO_2"].get())
             tol = int(self.entries["FREQ_TOLERANCE"].get())
             w_max = int(self.entries["WAVELOG_MAX_INTERVAL"].get())
+            sdr_port = int(self.ent_sdr_port.get())
             
             config.CONFIG["FLDIGI_URL"] = self.entries["FLDIGI_URL"].get().strip()
             config.CONFIG["FORCE_MODE_SELECTION"] = self.entries["FORCE_MODE_SELECTION"].get().strip()
@@ -99,6 +139,13 @@ class OptionsDialog(tk.Toplevel):
             config.CONFIG["PORT_RADIO_2"] = p2
             config.CONFIG["FREQ_TOLERANCE"] = tol
             config.CONFIG["WAVELOG_MAX_INTERVAL"] = w_max
+            config.CONFIG["START_POLL_RIG_1"] = self.var_poll_r1.get()
+            config.CONFIG["START_POLL_RIG_2"] = self.var_poll_r2.get()
+            
+            # Persist dynamic SDRconnect inputs
+            config.CONFIG["SDRCONNECT_ENABLED"] = self.var_sdr_enabled.get()
+            config.CONFIG["SDRCONNECT_HOST"] = self.ent_sdr_host.get().strip()
+            config.CONFIG["SDRCONNECT_PORT"] = sdr_port
 
             self.master.update_labels_from_config()
             config.fldigi_blackout_until = time.time() + 1.0
@@ -107,7 +154,7 @@ class OptionsDialog(tk.Toplevel):
             config.ui_print("⚙️ Configuration maps updated and saved to config.json.")
             self.destroy()
         except ValueError:
-            messagebox.showerror("Validation Error", "Ports, Tolerance, and Max Interval must be valid integers.")
+            messagebox.showerror("Validation Error", "Ports, Tolerance, and Ports must be valid integers.")
 
 
 class BridgeGUIApp(tk.Tk):
@@ -127,6 +174,9 @@ class BridgeGUIApp(tk.Tk):
         config._app_instance = self
         self.create_widgets()
         self.protocol("WM_DELETE_WINDOW", self.on_close)
+        
+        # Initialize individual buttons text/colors matching the loaded polling configs
+        self.sync_polling_buttons_to_state()
         self.update_gui_indicators()
 
     def create_widgets(self):
@@ -141,7 +191,6 @@ class BridgeGUIApp(tk.Tk):
         status_lf = ttk.LabelFrame(sys_frame, text=" LINK STATUS ")
         status_lf.pack(side='left', fill='both', padx=5, pady=5, expand=True)
 
-        # Added explicit hardware status bulbs
         self.canvas_r1_hw = tk.Canvas(status_lf, width=12, height=12, bg="#1e1e1e", highlightthickness=0)
         self.canvas_r1_hw.grid(row=0, column=0, padx=8, pady=4)
         self.lbl_r1_hw = tk.Label(status_lf, text="Rig 1 Comm: Offline", bg="#1e1e1e", fg="#aaaaaa", font=('Helvetica', 9))
@@ -162,9 +211,15 @@ class BridgeGUIApp(tk.Tk):
         self.lbl_wave = tk.Label(status_lf, text="Wavelog Cloud: Offline", bg="#1e1e1e", fg="#aaaaaa", font=('Helvetica', 9))
         self.lbl_wave.grid(row=3, column=1, sticky='w', padx=2)
 
+        self.canvas_sdr = tk.Canvas(status_lf, width=12, height=12, bg="#1e1e1e", highlightthickness=0)
+        self.canvas_sdr.grid(row=4, column=0, padx=8, pady=4)
+        self.lbl_sdr_status = tk.Label(status_lf, text="SDRconnect Link: Offline", bg="#1e1e1e", fg="#aaaaaa", font=('Helvetica', 9))
+        self.lbl_sdr_status.grid(row=4, column=1, sticky='w', padx=2)
+
         ops_lf = ttk.LabelFrame(sys_frame, text=" ROUTING & UTILITIES ")
         ops_lf.pack(side='right', fill='both', padx=5, pady=5, expand=True)
         
+        # 1. Fldigi Target Routing Row
         target_container = tk.Frame(ops_lf, bg="#1e1e1e")
         target_container.pack(fill='x', padx=10, pady=6)
         
@@ -175,6 +230,18 @@ class BridgeGUIApp(tk.Tk):
         self.combo_target.pack(side='left', padx=5)
         self.combo_target.bind("<<ComboboxSelected>>", self.on_fldigi_target_changed)
         
+        # 2. SDRconnect Target Routing Row
+        sdr_target_container = tk.Frame(ops_lf, bg="#1e1e1e")
+        sdr_target_container.pack(fill='x', padx=10, pady=6)
+        
+        lbl_sdr_target = tk.Label(sdr_target_container, text="SDRconnect Target Rig:", bg="#1e1e1e", fg="#ffffff", font=('Helvetica', 9, 'bold'))
+        lbl_sdr_target.pack(side='left', padx=5)
+        
+        self.combo_sdr_target = ttk.Combobox(sdr_target_container, state="readonly", width=25)
+        self.combo_sdr_target.pack(side='left', padx=5)
+        self.combo_sdr_target.bind("<<ComboboxSelected>>", self.on_sdrconnect_target_changed)
+
+        # 3. Utilities Button Row (Placed at the bottom of the container)
         btn_row = tk.Frame(ops_lf, bg="#1e1e1e")
         btn_row.pack(fill='x', padx=10, pady=6, side='bottom')
 
@@ -264,8 +331,23 @@ class BridgeGUIApp(tk.Tk):
         
         r1_val = f"Rig 1: {config.CONFIG['RADIO_1_NAME']}"
         r2_val = f"Rig 2: {config.CONFIG['RADIO_2_NAME']}"
+        
+        # Keep Fldigi combobox populated
         self.combo_target['values'] = [r1_val, r2_val]
         self.combo_target.set(r1_val if config.current_fldigi_target_rig == 1 else r2_val)
+
+        # >>> ADD THIS TO POPULATE THE NEW SDRCONNECT COMBOBOX <<<
+        self.combo_sdr_target['values'] = [r1_val, r2_val]
+        self.combo_sdr_target.set(r1_val if config.current_sdrconnect_target_rig == 1 else r2_val)
+
+    def sync_polling_buttons_to_state(self):
+        """Initializes GUI cards to correctly match states loaded directly from config settings."""
+        for num in (1, 2):
+            btn = self.btn_poll_r1 if num == 1 else self.btn_poll_r2
+            if config.rig_polling_enabled[num]:
+                btn.config(text="Polling: Active", bg="#1b5e20")
+            else:
+                btn.config(text="Polling: Paused", bg="#b71c1c")
 
     def toggle_rig_polling(self, rig_num):
         config.rig_polling_enabled[rig_num] = not config.rig_polling_enabled[rig_num]
@@ -312,6 +394,30 @@ class BridgeGUIApp(tk.Tk):
         if freq_to_push > 0 and config.status_states[f"rig{target_rig}_hw"] == "online":
             config.ui_print(f"🔄 Sync Target Shifted: Immediately sending Rig {target_rig} VFO ({freq_to_push} Hz) to Fldigi...")
             threading.Thread(target=network_workers.sync_to_fldigi, args=(freq_to_push, friendly_mode), daemon=True).start()
+        
+        if freq_to_push > 0 and config.status_states[f"rig{target_rig}_hw"] == "online":
+            config.ui_print(f"🔄 Sync Target Shifted: Immediately sending Rig {target_rig} VFO ({freq_to_push} Hz) to Fldigi...")
+            threading.Thread(target=network_workers.sync_to_fldigi, args=(freq_to_push, friendly_mode), daemon=True).start()
+            
+            # >>> ADD THIS SDRCONNECT RIG-SWITCH TRIGGER <<<
+            if config.CONFIG.get("SDRCONNECT_ENABLED", False):
+                import sdrconnect_worker
+                threading.Thread(target=sdrconnect_worker.sync_to_sdrconnect, args=(freq_to_push, friendly_mode), daemon=True).start()
+    
+    def on_sdrconnect_target_changed(self, event):
+        val = self.combo_sdr_target.get()
+        config.current_sdrconnect_target_rig = 1 if val.startswith("Rig 1") else 2
+        config.ui_print(f"🎯 SDRconnect sync target route changed to: Rig {config.current_sdrconnect_target_rig}")
+        
+        target_rig = config.current_sdrconnect_target_rig
+        freq_to_push = config.last_freqs[target_rig]
+        mode_code = config.last_modes[target_rig]
+        friendly_mode = config.OMNIRIG_MODES.get(mode_code, "USB")
+        
+        if freq_to_push > 0 and config.status_states[f"rig{target_rig}_hw"] == "online":
+            if config.CONFIG.get("SDRCONNECT_ENABLED", False):
+                config.ui_print(f"🔄 Sync Target Shifted: Immediately sending Rig {target_rig} VFO ({freq_to_push} Hz) to SDRconnect...")
+                threading.Thread(target=sdrconnect_worker.sync_to_sdrconnect, args=(freq_to_push, friendly_mode), daemon=True).start()
 
     def draw_status_dot(self, canvas, color):
         canvas.delete("all")
@@ -324,11 +430,25 @@ class BridgeGUIApp(tk.Tk):
         self.after(0, append)
 
     def update_gui_indicators(self):
-        # Helper to maps states to specific color profiles
-        def get_color_for_state(state):
+        # Insert into your update_gui_indicators loop:
+        sdr_status = config.status_states.get("sdrconnect", "offline")
+        is_sdr_active = config.CONFIG.get("SDRCONNECT_ENABLED", False)
+
+        # Gray out if the option is deactivated, otherwise show active Green / broken Red
+        sdr_color = "#555555" if not is_sdr_active else ("#00ff00" if sdr_status == "online" else "#ff0000")
+        # Assign to an added status canvas or label item as preferred.
+        def get_color_for_state(state, is_enabled):
+            if not is_enabled: return "#555555"          # Grey for Disabled status
             if state == "online": return "#00ff00"       # Green
             if state == "not_responding": return "#ff9900" # Orange
             return "#ff0000"                             # Red
+        self.draw_status_dot(self.canvas_sdr, sdr_color)
+        self.lbl_sdr_status.config(
+            text="SDRconnect: Active" if sdr_status == "online" and is_sdr_active else ("SDRconnect: Offline" if is_sdr_active else "SDRconnect: Disabled"),
+            fg="#ffffff" if sdr_status == "online" and is_sdr_active else "#777777"
+        )
+
+
 
         # Rig 1 Box View Rendering
         if config.rig_polling_enabled[1]:
@@ -368,16 +488,22 @@ class BridgeGUIApp(tk.Tk):
             self.lbl_r2_freq_b.config(text="VFO-B: --", fg="#555555")
             self.lbl_r2_mode.config(text="MODE: --")
 
-        # Update Sidebar Status Lights
+        # Update Sidebar Link Status Lights with explicit checks for dynamic disabled state overrides
         r1_st = config.status_states["rig1_hw"]
-        self.draw_status_dot(self.canvas_r1_hw, get_color_for_state(r1_st))
-        r1_lbl_text = f"Rig 1: Ready" if r1_st == "online" else (f"Rig 1: No Response" if r1_st == "not_responding" else "Rig 1: Offline")
-        self.lbl_r1_hw.config(text=r1_lbl_text, fg="#ffffff" if r1_st == "online" else ("#ffaa33" if r1_st == "not_responding" else "#ff8888"))
+        self.draw_status_dot(self.canvas_r1_hw, get_color_for_state(r1_st, config.rig_polling_enabled[1]))
+        if not config.rig_polling_enabled[1]:
+            self.lbl_r1_hw.config(text="Rig 1: Disabled", fg="#777777")
+        else:
+            r1_lbl_text = f"Rig 1: Ready" if r1_st == "online" else (f"Rig 1: No Response" if r1_st == "not_responding" else "Rig 1: Offline")
+            self.lbl_r1_hw.config(text=r1_lbl_text, fg="#ffffff" if r1_st == "online" else ("#ffaa33" if r1_st == "not_responding" else "#ff8888"))
 
         r2_st = config.status_states["rig2_hw"]
-        self.draw_status_dot(self.canvas_r2_hw, get_color_for_state(r2_st))
-        r2_lbl_text = f"Rig 2: Ready" if r2_st == "online" else (f"Rig 2: No Response" if r2_st == "not_responding" else "Rig 2: Offline")
-        self.lbl_r2_hw.config(text=r2_lbl_text, fg="#ffffff" if r2_st == "online" else ("#ffaa33" if r2_st == "not_responding" else "#ff8888"))
+        self.draw_status_dot(self.canvas_r2_hw, get_color_for_state(r2_st, config.rig_polling_enabled[2]))
+        if not config.rig_polling_enabled[2]:
+            self.lbl_r2_hw.config(text="Rig 2: Disabled", fg="#777777")
+        else:
+            r2_lbl_text = f"Rig 2: Ready" if r2_st == "online" else (f"Rig 2: No Response" if r2_st == "not_responding" else "Rig 2: Offline")
+            self.lbl_r2_hw.config(text=r2_lbl_text, fg="#ffffff" if r2_st == "online" else ("#ffaa33" if r2_st == "not_responding" else "#ff8888"))
 
         self.draw_status_dot(self.canvas_fldigi, "#00ff00" if config.status_states["fldigi"] == "online" else "#ff0000")
         self.lbl_fldigi.config(text="Fldigi Link: Active" if config.status_states["fldigi"] == "online" else "Fldigi Link: Offline", fg="#ffffff" if config.status_states["fldigi"] == "online" else "#ff8888")

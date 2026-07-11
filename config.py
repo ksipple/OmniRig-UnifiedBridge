@@ -16,7 +16,13 @@ CONFIG = {
     "PORT_RADIO_2": 54322,
     "POLL_INTERVAL": 0.2,
     "FREQ_TOLERANCE": 10,
-    "WAVELOG_MAX_INTERVAL": 30
+    "WAVELOG_MAX_INTERVAL": 30,
+    "START_POLL_RIG_1": True,  # New: Track startup preference for Rig 1
+    "START_POLL_RIG_2": True,   # New: Track startup preference for Rig 2
+    "SDRCONNECT_ENABLED": False,       # Toggle control for SDRconnect
+    "SDRCONNECT_HOST": "127.0.0.1",    # SDRconnect Client IP
+    "SDRCONNECT_PORT": 5454,           # Default SDRconnect WebSocket port
+    "SDRCONNECT_SYNC_VFO": True
 }
 
 def load_config():
@@ -60,14 +66,15 @@ queue_lock = threading.Lock()
 last_freqs = {1: 0, 2: 0}
 last_freqs_b = {1: 0, 2: 0}
 last_modes = {1: 0, 2: 0}
-last_wavelog_push_time = {1: 0, 2: 0}  # Track heartbeat intervals
+last_wavelog_push_time = {1: 0, 2: 0}
 
 rig_blackout_until = 0
 fldigi_blackout_until = 0
 last_pushed_to_fldigi = 0
 
-# Master tracking flags
 omnirig_global_enabled = True  
+
+# Master tracking flags initial values (applied from loaded config below)
 rig_polling_enabled = {1: True, 2: True}
 
 status_states = {
@@ -77,7 +84,8 @@ status_states = {
     "rig1_hw": "offline",  
     "rig2_hw": "offline"   
 }
-current_fldigi_target_rig = 1  
+current_fldigi_target_rig = 1
+current_sdrconnect_target_rig = 1
 active_ports = {1: CONFIG["PORT_RADIO_1"], 2: CONFIG["PORT_RADIO_2"]}
 
 _app_instance = None
@@ -87,4 +95,7 @@ def ui_print(msg):
     if _app_instance is not None:
         _app_instance.log_message(msg)
 
+# Execute load sequence and apply startup polling configurations
 load_config()
+rig_polling_enabled[1] = CONFIG["START_POLL_RIG_1"]
+rig_polling_enabled[2] = CONFIG["START_POLL_RIG_2"]
