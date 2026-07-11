@@ -114,7 +114,7 @@ class BridgeGUIApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("OmniRig - Fldigi - Wavelog Configurable Bridge")
-        self.geometry("820x595")
+        self.geometry("820x620")
         self.configure(bg="#1e1e1e")
         
         self.style = ttk.Style()
@@ -125,10 +125,8 @@ class BridgeGUIApp(tk.Tk):
         self.style.configure('TCombobox', fieldbackground='#2d2d2d', background='#2d2d2d', foreground='#ffffff')
         
         config._app_instance = self
-        
         self.create_widgets()
         self.protocol("WM_DELETE_WINDOW", self.on_close)
-        
         self.update_gui_indicators()
 
     def create_widgets(self):
@@ -143,20 +141,26 @@ class BridgeGUIApp(tk.Tk):
         status_lf = ttk.LabelFrame(sys_frame, text=" LINK STATUS ")
         status_lf.pack(side='left', fill='both', padx=5, pady=5, expand=True)
 
-        self.canvas_omni = tk.Canvas(status_lf, width=12, height=12, bg="#1e1e1e", highlightthickness=0)
-        self.canvas_omni.grid(row=0, column=0, padx=8, pady=5)
-        self.lbl_omni = tk.Label(status_lf, text="OmniRig: Checking...", bg="#1e1e1e", fg="#aaaaaa", font=('Helvetica', 9))
-        self.lbl_omni.grid(row=0, column=1, sticky='w', padx=2)
+        # Added explicit hardware status bulbs
+        self.canvas_r1_hw = tk.Canvas(status_lf, width=12, height=12, bg="#1e1e1e", highlightthickness=0)
+        self.canvas_r1_hw.grid(row=0, column=0, padx=8, pady=4)
+        self.lbl_r1_hw = tk.Label(status_lf, text="Rig 1 Comm: Offline", bg="#1e1e1e", fg="#aaaaaa", font=('Helvetica', 9))
+        self.lbl_r1_hw.grid(row=0, column=1, sticky='w', padx=2)
+
+        self.canvas_r2_hw = tk.Canvas(status_lf, width=12, height=12, bg="#1e1e1e", highlightthickness=0)
+        self.canvas_r2_hw.grid(row=1, column=0, padx=8, pady=4)
+        self.lbl_r2_hw = tk.Label(status_lf, text="Rig 2 Comm: Offline", bg="#1e1e1e", fg="#aaaaaa", font=('Helvetica', 9))
+        self.lbl_r2_hw.grid(row=1, column=1, sticky='w', padx=2)
 
         self.canvas_fldigi = tk.Canvas(status_lf, width=12, height=12, bg="#1e1e1e", highlightthickness=0)
-        self.canvas_fldigi.grid(row=1, column=0, padx=8, pady=5)
+        self.canvas_fldigi.grid(row=2, column=0, padx=8, pady=4)
         self.lbl_fldigi = tk.Label(status_lf, text="Fldigi Link: Offline", bg="#1e1e1e", fg="#aaaaaa", font=('Helvetica', 9))
-        self.lbl_fldigi.grid(row=1, column=1, sticky='w', padx=2)
+        self.lbl_fldigi.grid(row=2, column=1, sticky='w', padx=2)
 
         self.canvas_wave = tk.Canvas(status_lf, width=12, height=12, bg="#1e1e1e", highlightthickness=0)
-        self.canvas_wave.grid(row=2, column=0, padx=8, pady=5)
+        self.canvas_wave.grid(row=3, column=0, padx=8, pady=4)
         self.lbl_wave = tk.Label(status_lf, text="Wavelog Cloud: Offline", bg="#1e1e1e", fg="#aaaaaa", font=('Helvetica', 9))
-        self.lbl_wave.grid(row=2, column=1, sticky='w', padx=2)
+        self.lbl_wave.grid(row=3, column=1, sticky='w', padx=2)
 
         ops_lf = ttk.LabelFrame(sys_frame, text=" ROUTING & UTILITIES ")
         ops_lf.pack(side='right', fill='both', padx=5, pady=5, expand=True)
@@ -184,7 +188,6 @@ class BridgeGUIApp(tk.Tk):
                                       command=self.open_omnirig_dialog)
         btn_omni_settings.pack(side='left', expand=True, fill='x', padx=2)
 
-        # Global Master On/Off Button
         self.btn_toggle_omni = tk.Button(btn_row, text="🟢 OmniRig: Enabled", bg="#1b5e20", fg="white",
                                          font=('Helvetica', 9, 'bold'), relief='flat', overrelief='groove',
                                          command=self.toggle_omnirig_global)
@@ -193,7 +196,7 @@ class BridgeGUIApp(tk.Tk):
         cards_frame = tk.Frame(self, bg="#1e1e1e")
         cards_frame.pack(fill='x', padx=15, pady=5)
 
-        # Rig 1 Visual Panel Block
+        # Rig 1 Visual Card Box
         self.rig1_lf = ttk.LabelFrame(cards_frame, text=" RIG 1 ")
         self.rig1_lf.pack(side='left', fill='both', expand=True, padx=5, pady=5)
 
@@ -208,7 +211,7 @@ class BridgeGUIApp(tk.Tk):
                                      font=('Helvetica', 8, 'bold'), relief='flat', command=lambda: self.toggle_rig_polling(1))
         self.btn_poll_r1.pack(pady=6)
 
-        # Rig 2 Visual Panel Block
+        # Rig 2 Visual Card Box
         self.rig2_lf = ttk.LabelFrame(cards_frame, text=" RIG 2 ")
         self.rig2_lf.pack(side='right', fill='both', expand=True, padx=5, pady=5)
 
@@ -229,7 +232,7 @@ class BridgeGUIApp(tk.Tk):
         self.log_area.pack(fill='both', expand=True, padx=5, pady=5)
 
         self.update_labels_from_config()
-        
+
     def open_options_dialog(self):
         OptionsDialog(self)
 
@@ -285,7 +288,6 @@ class BridgeGUIApp(tk.Tk):
         self.evaluate_omnirig_process_rules()
 
     def evaluate_omnirig_process_rules(self):
-        """Sends clean state change tasks into the worker queue based on master context variables."""
         if not config.omnirig_global_enabled:
             config.ui_print("🛑 OmniRig processing stopped. Issuing direct hard-kill command sequence...")
             with config.queue_lock:
@@ -307,13 +309,13 @@ class BridgeGUIApp(tk.Tk):
         mode_code = config.last_modes[target_rig]
         friendly_mode = config.OMNIRIG_MODES.get(mode_code, "USB")
         
-        if freq_to_push > 0:
+        if freq_to_push > 0 and config.status_states[f"rig{target_rig}_hw"] == "online":
             config.ui_print(f"🔄 Sync Target Shifted: Immediately sending Rig {target_rig} VFO ({freq_to_push} Hz) to Fldigi...")
             threading.Thread(target=network_workers.sync_to_fldigi, args=(freq_to_push, friendly_mode), daemon=True).start()
 
     def draw_status_dot(self, canvas, color):
         canvas.delete("all")
-        canvas.create_oval(2, 2, 9, 9, fill=color, outline="#333333")
+        canvas.create_oval(2, 2, 10, 10, fill=color, outline="#333333")
 
     def log_message(self, message):
         def append():
@@ -322,38 +324,60 @@ class BridgeGUIApp(tk.Tk):
         self.after(0, append)
 
     def update_gui_indicators(self):
+        # Helper to maps states to specific color profiles
+        def get_color_for_state(state):
+            if state == "online": return "#00ff00"       # Green
+            if state == "not_responding": return "#ff9900" # Orange
+            return "#ff0000"                             # Red
+
+        # Rig 1 Box View Rendering
         if config.rig_polling_enabled[1]:
-            f1, f1_b = config.last_freqs[1], config.last_freqs_b[1]
-            m1 = config.OMNIRIG_MODES.get(config.last_modes[1], "--") if config.last_modes[1] else "--"
-            if f1 > 0:
-                self.lbl_r1_freq.config(text=f"{f1 / 1_000_000:,.6f} MHz", fg="#ffffff")
+            if config.status_states["rig1_hw"] == "not_responding":
+                self.lbl_r1_freq.config(text="NO RESPONSE", fg="#ff9900")
+                self.lbl_r1_mode.config(text="STATUS: RigNotReady")
+            elif config.status_states["rig1_hw"] == "online":
+                f1, f1_b = config.last_freqs[1], config.last_freqs_b[1]
+                m1 = config.OMNIRIG_MODES.get(config.last_modes[1], "--") if config.last_modes[1] else "--"
+                self.lbl_r1_freq.config(text=f"{f1 / 1_000_000:,.6f} MHz" if f1 > 0 else "0.000.000 MHz", fg="#ffffff")
                 self.lbl_r1_mode.config(text=f"MODE: {m1}")
+                self.lbl_r1_freq_b.config(text=f"VFO-B: {f1_b / 1_000_000:,.6f} MHz" if f1_b > 0 else "VFO-B: --", fg="#00ffcc" if f1_b > 0 else "#aaaaaa")
             else:
-                self.lbl_r1_freq.config(text="0.000.000 MHz", fg="#ffffff")
+                self.lbl_r1_freq.config(text="OFFLINE", fg="#ff4444")
                 self.lbl_r1_mode.config(text="MODE: --")
-            self.lbl_r1_freq_b.config(text=f"VFO-B: {f1_b / 1_000_000:,.6f} MHz" if f1_b > 0 else "VFO-B: --", fg="#00ffcc" if f1_b > 0 else "#aaaaaa")
         else:
-            self.lbl_r1_freq.config(text="PAUSED", fg="#ff4444")
-            self.lbl_r1_freq_b.config(text="VFO-B: --", fg="#888888")
+            self.lbl_r1_freq.config(text="PAUSED", fg="#777777")
+            self.lbl_r1_freq_b.config(text="VFO-B: --", fg="#555555")
             self.lbl_r1_mode.config(text="MODE: --")
 
+        # Rig 2 Box View Rendering
         if config.rig_polling_enabled[2]:
-            f2, f2_b = config.last_freqs[2], config.last_freqs_b[2]
-            m2 = config.OMNIRIG_MODES.get(config.last_modes[2], "--") if config.last_modes[2] else "--"
-            if f2 > 0:
-                self.lbl_r2_freq.config(text=f"{f2 / 1_000_000:,.6f} MHz", fg="#ffffff")
+            if config.status_states["rig2_hw"] == "not_responding":
+                self.lbl_r2_freq.config(text="NO RESPONSE", fg="#ff9900")
+                self.lbl_r2_mode.config(text="STATUS: RigNotReady")
+            elif config.status_states["rig2_hw"] == "online":
+                f2, f2_b = config.last_freqs[2], config.last_freqs_b[2]
+                m2 = config.OMNIRIG_MODES.get(config.last_modes[2], "--") if config.last_modes[2] else "--"
+                self.lbl_r2_freq.config(text=f"{f2 / 1_000_000:,.6f} MHz" if f2 > 0 else "0.000.000 MHz", fg="#ffffff")
                 self.lbl_r2_mode.config(text=f"MODE: {m2}")
+                self.lbl_r2_freq_b.config(text=f"VFO-B: {f2_b / 1_000_000:,.6f} MHz" if f2_b > 0 else "VFO-B: --", fg="#00ffcc" if f2_b > 0 else "#aaaaaa")
             else:
-                self.lbl_r2_freq.config(text="0.000.000 MHz", fg="#ffffff")
+                self.lbl_r2_freq.config(text="OFFLINE", fg="#ff4444")
                 self.lbl_r2_mode.config(text="MODE: --")
-            self.lbl_r2_freq_b.config(text=f"VFO-B: {f2_b / 1_000_000:,.6f} MHz" if f2_b > 0 else "VFO-B: --", fg="#00ffcc" if f2_b > 0 else "#aaaaaa")
         else:
-            self.lbl_r2_freq.config(text="PAUSED", fg="#ff4444")
-            self.lbl_r2_freq_b.config(text="VFO-B: --", fg="#888888")
+            self.lbl_r2_freq.config(text="PAUSED", fg="#777777")
+            self.lbl_r2_freq_b.config(text="VFO-B: --", fg="#555555")
             self.lbl_r2_mode.config(text="MODE: --")
 
-        self.draw_status_dot(self.canvas_omni, "#00ff00" if config.status_states["omnirig"] == "online" else "#ff0000")
-        self.lbl_omni.config(text="OmniRig: Connected" if config.status_states["omnirig"] == "online" else "OmniRig: Offline", fg="#ffffff" if config.status_states["omnirig"] == "online" else "#ff8888")
+        # Update Sidebar Status Lights
+        r1_st = config.status_states["rig1_hw"]
+        self.draw_status_dot(self.canvas_r1_hw, get_color_for_state(r1_st))
+        r1_lbl_text = f"Rig 1: Ready" if r1_st == "online" else (f"Rig 1: No Response" if r1_st == "not_responding" else "Rig 1: Offline")
+        self.lbl_r1_hw.config(text=r1_lbl_text, fg="#ffffff" if r1_st == "online" else ("#ffaa33" if r1_st == "not_responding" else "#ff8888"))
+
+        r2_st = config.status_states["rig2_hw"]
+        self.draw_status_dot(self.canvas_r2_hw, get_color_for_state(r2_st))
+        r2_lbl_text = f"Rig 2: Ready" if r2_st == "online" else (f"Rig 2: No Response" if r2_st == "not_responding" else "Rig 2: Offline")
+        self.lbl_r2_hw.config(text=r2_lbl_text, fg="#ffffff" if r2_st == "online" else ("#ffaa33" if r2_st == "not_responding" else "#ff8888"))
 
         self.draw_status_dot(self.canvas_fldigi, "#00ff00" if config.status_states["fldigi"] == "online" else "#ff0000")
         self.lbl_fldigi.config(text="Fldigi Link: Active" if config.status_states["fldigi"] == "online" else "Fldigi Link: Offline", fg="#ffffff" if config.status_states["fldigi"] == "online" else "#ff8888")

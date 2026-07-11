@@ -16,7 +16,7 @@ CONFIG = {
     "PORT_RADIO_2": 54322,
     "POLL_INTERVAL": 0.2,
     "FREQ_TOLERANCE": 10,
-    "WAVELOG_MAX_INTERVAL": 60  # Added parameter for max time without updates
+    "WAVELOG_MAX_INTERVAL": 30
 }
 
 def load_config():
