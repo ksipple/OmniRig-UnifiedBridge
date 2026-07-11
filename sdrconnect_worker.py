@@ -102,7 +102,7 @@ def sdrconnect_heartbeat_loop():
                     except IndexError:
                         continue
                         
-                    if config.status_states.get("sdrconnect_ws") == "online":
+                    if config.status_states.get("sdrconnect") == "online":
                         formatted_freq = f"{req_freq:011d}"
                         
                         _last_sent_freq = req_freq
