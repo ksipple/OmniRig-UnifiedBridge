@@ -1,7 +1,7 @@
 import time
 import threading
 import win32com.client
-import win32con
+import pythoncom
 import config
 import network_workers
 import sdrconnect_worker
@@ -24,7 +24,7 @@ def omnirig_worker_thread():
             try:
                 import pythoncom
                 pythoncom.CoInitialize()
-                omnirig = win32com.client.Dispatch("OmniRig.OmniRigX")
+                omnirig = win32com.client.dynamic.Dispatch("OmniRig.OmniRigX")
                 config.ui_print("✅ Connected to OmniRig Engine Successfully.")
             except Exception as e:
                 config.ui_print(f"❌ Failed to bind OmniRig COM Object: {e}. Retrying...")
@@ -39,7 +39,7 @@ def omnirig_worker_thread():
                 latest_request = None
                 remaining_queue = []
                 
-                # Dynamic index checking to prevent structural length unpacking crashes (e.g. Wavelog 5-item tuples)
+                # Bounds-safe extraction to absorb irregular payload layouts
                 queue_item = config.tune_queue[0]
                 prime_rig = queue_item[0] if len(queue_item) > 0 else 1
                 prime_freq = queue_item[1] if len(queue_item) > 1 else 0
@@ -49,7 +49,7 @@ def omnirig_worker_thread():
                 if not prime_rig or prime_rig == 0:
                     prime_rig = 1
                 
-                # 🚀 SQUASH THE QUEUE: Discard lagging intermediate scroll steps from the same source
+                # 🚀 SQUASH THE QUEUE: Filter out intermediate steps from fast mouse wheel actions
                 if prime_source in ['sdrconnect', 'fldigi', 'wavelog']:
                     for req in reversed(config.tune_queue):
                         current_req_source = req[3] if len(req) > 3 else "unknown"
@@ -64,11 +64,11 @@ def omnirig_worker_thread():
                             current_req_rig = req[0] if (len(req) > 0 and req[0] and req[0] != 0) else 1
                             if current_req_source == prime_source and current_req_rig == prime_rig:
                                 if req != latest_request:
-                                    continue # Drop historical redundant queue entries
+                                    continue # Delete stale tracking instructions
                             remaining_queue.append(req)
                         config.tune_queue = remaining_queue
                 
-                # Safe array pull assignment
+                # Safe unpack pop
                 raw_pop_item = config.tune_queue.pop(0)
                 target_rig = raw_pop_item[0] if len(raw_pop_item) > 0 else 1
                 target_freq = raw_pop_item[1] if len(raw_pop_item) > 1 else 0
@@ -82,36 +82,31 @@ def omnirig_worker_thread():
                     rig_obj = omnirig.Rig1 if target_rig == 1 else omnirig.Rig2
                     print(f"📥 [QUEUE PROCESSING] Forcing raw COM write: Rig {target_rig} -> {target_freq} Hz ({target_mode}) via {source}")
                     
-                    # 🛑 HARD LOCK WINDOW: Keep inbound loops entirely quiet while the slow serial interface settles
+                    # 🛑 HARD LOCK WINDOW: Keep inbound monitoring quiet during active transfer execution
                     config.rig_blackout_until = current_time + 1.20  
                     config.expected_freqs[target_rig] = target_freq
                     config.expected_lock_timeout[target_rig] = current_time + 5.0
                     
-                    # Map text mode to OmniRig binary map index 
+                    # Resolve Mode Mapping index
                     mode_enum = next((k for k, v in config.OMNIRIG_MODES.items() if v == target_mode), 1)
                     
-                    import pythoncom
-                    
-                    # Resolve Mode ID safely
+                    # Resolve COM automation properties 
                     mode_id = rig_obj._oleobj_.GetIDsOfNames("Mode")
                     if not isinstance(mode_id, int):
                         mode_id = mode_id[0]
                         
-                    # 🎯 TARGET FREQA INSTEAD OF GENERIC FREQ:
-                    # Explicitly writing to FreqA tells OmniRig to hammer VFO-A directly,
-                    # bypassing any internal OmniRig state machine ambiguity.
-                    freq_id = rig_obj._oleobj_.GetIDsOfNames("FreqA")
+                    freq_id = rig_obj._oleobj_.GetIDsOfNames("FreqA") # Target VFO A directly to force K3 to latch
                     if not isinstance(freq_id, int):
                         freq_id = freq_id[0]
                     
-                    # Execute direct property puts down the Windows API pipeline using pythoncom
+                    # Fire direct OLE property calls down the pipeline
                     # 1. Write Mode
                     rig_obj._oleobj_.Invoke(
                         mode_id, 0, pythoncom.DISPATCH_PROPERTYPUT, True, int(mode_enum)
                     )
                     time.sleep(0.04)
                     
-                    # 2. Write Frequency to FreqA
+                    # 2. Write Frequency
                     rig_obj._oleobj_.Invoke(
                         freq_id, 0, pythoncom.DISPATCH_PROPERTYPUT, True, int(target_freq)
                     )
@@ -144,10 +139,15 @@ def omnirig_worker_thread():
                         friendly_mode = config.OMNIRIG_MODES.get(r1_mode, "USB")
                         
                         if config.status_states["rig1_hw"] == "online":
+                            # 🎯 Baseline tracking values before validating variations
+                            if config.last_freqs[1] == 0:
+                                config.last_freqs[1] = r1_freq
+                                config.last_modes[1] = r1_mode
+                                config.last_wavelog_push_time[1] = current_time
+                                print(f"📡 [OmniRig Setup] Captured Rig 1 Baseline -> VFO A: {r1_freq} Hz | Mode: {friendly_mode}")
+                            
                             skip_rig1_processing = False
                             
-                            # 🎯 DYNAMIC TOLERANCE PATCH:
-                            # Expanded deadzone window to prevent old VFO polling values from fighting waterfall updates
                             if config.expected_freqs[1] > 0:
                                 if abs(r1_freq - config.expected_freqs[1]) <= 2000:
                                     config.expected_freqs[1] = 0 
@@ -162,8 +162,15 @@ def omnirig_worker_thread():
                                 is_timeout = (current_time - config.last_wavelog_push_time[1] > config.CONFIG["WAVELOG_MAX_INTERVAL"])
                                 
                                 if is_changed or is_timeout:
-                                    if not (is_timeout and not is_changed):
-                                        print(f"📡 [Elecraft K3 Dial Action] VFO: {r1_freq} Hz | Mode: {friendly_mode}")
+                                    is_band_jump = (config.last_freqs[1] > 0) and (abs(r1_freq - config.last_freqs[1]) > 1000000)
+                                    
+                                    # Update track metrics IMMEDIATELY to protect loop from API threading crashes
+                                    config.last_freqs[1] = r1_freq
+                                    config.last_modes[1] = r1_mode
+                                    config.last_wavelog_push_time[1] = current_time
+                                    
+                                    if is_changed:
+                                        print(f"📡 [Elecraft K3 Dial Action] VFO: {r1_freq} Hz | Mode: {friendly_mode} {'(Band Jump!)' if is_band_jump else ''}")
                                         
                                     threading.Thread(target=network_workers.post_to_wavelog_api, args=(config.CONFIG["RADIO_1_NAME"], r1_freq, friendly_mode), daemon=True).start()
                                     
@@ -173,15 +180,12 @@ def omnirig_worker_thread():
                                         
                                     if config.current_sdrconnect_target_rig == 1 and is_changed:
                                         if config.CONFIG.get("SDRCONNECT_ENABLED", False):
-                                            sdrconnect_worker.send_to_sdrconnect_fast(r1_freq, friendly_mode)
-                                        
-                                    config.last_freqs[1] = r1_freq
-                                    config.last_modes[1] = r1_mode
-                                    config.last_wavelog_push_time[1] = current_time
-                                    
+                                            sdrconnect_worker.send_to_sdrconnect_fast(r1_freq, friendly_mode, force_center=is_band_jump)
+                                                                    
                                 if r1_freq_b > 0 and abs(r1_freq_b - config.last_freqs_b[1]) > config.CONFIG["FREQ_TOLERANCE"]:
                                     config.last_freqs_b[1] = r1_freq_b
-                except Exception: 
+                except Exception as e: 
+                    print(f"⚠️ Rig 1 Loop Processing Failure: {e}")
                     config.status_states["rig1_hw"] = "not_responding"
 
             # --- Rig 2 Hardware Monitoring ---
@@ -202,6 +206,13 @@ def omnirig_worker_thread():
                         friendly_mode = config.OMNIRIG_MODES.get(r2_mode, "USB")
 
                         if config.status_states["rig2_hw"] == "online":
+                            # 🎯 Baseline tracking values before validating variations
+                            if config.last_freqs[2] == 0:
+                                config.last_freqs[2] = r2_freq
+                                config.last_modes[2] = r2_mode
+                                config.last_wavelog_push_time[2] = current_time
+                                print(f"📡 [OmniRig Setup] Captured Rig 2 Baseline -> VFO A: {r2_freq} Hz | Mode: {friendly_mode}")
+
                             skip_rig2_processing = False
                             if config.expected_freqs[2] > 0:
                                 if abs(r2_freq - config.expected_freqs[2]) <= 2000:
@@ -217,8 +228,15 @@ def omnirig_worker_thread():
                                 is_timeout = (current_time - config.last_wavelog_push_time[2] > config.CONFIG["WAVELOG_MAX_INTERVAL"])
                                 
                                 if is_changed or is_timeout:
-                                    if not (is_timeout and not is_changed):
-                                        print(f"📡 [{config.CONFIG['RADIO_2_NAME']} Dial Action] VFO: {r2_freq} Hz | Mode: {friendly_mode}")
+                                    is_band_jump = (config.last_freqs[2] > 0) and (abs(r2_freq - config.last_freqs[2]) > 1000000)
+                                    
+                                    # Update track metrics IMMEDIATELY to protect loop from API threading crashes
+                                    config.last_freqs[2] = r2_freq
+                                    config.last_modes[2] = r2_mode
+                                    config.last_wavelog_push_time[2] = current_time
+                                    
+                                    if is_changed:
+                                        print(f"📡 [{config.CONFIG['RADIO_2_NAME']} Dial Action] VFO: {r2_freq} Hz | Mode: {friendly_mode} {'(Band Jump!)' if is_band_jump else ''}")
                                         
                                     threading.Thread(target=network_workers.post_to_wavelog_api, args=(config.CONFIG["RADIO_2_NAME"], r2_freq, friendly_mode), daemon=True).start()
                                     
@@ -228,16 +246,12 @@ def omnirig_worker_thread():
                                         
                                     if config.current_sdrconnect_target_rig == 2 and is_changed:
                                         if config.CONFIG.get("SDRCONNECT_ENABLED", False):
-                                            sdrconnect_worker.send_to_sdrconnect_fast(r2_freq, friendly_mode)
-                                            
-                                    config.last_freqs[2] = r2_freq
-                                    config.last_modes[2] = r2_mode
-                                    config.last_wavelog_push_time[2] = current_time
-                                    
+                                            sdrconnect_worker.send_to_sdrconnect_fast(r2_freq, friendly_mode, force_center=is_band_jump)
+                                                                    
                                 if r2_freq_b > 0 and abs(r2_freq_b - config.last_freqs_b[2]) > config.CONFIG["FREQ_TOLERANCE"]:
                                     config.last_freqs_b[2] = r2_freq_b
-                except Exception: 
+                except Exception as e: 
+                    print(f"⚠️ Rig 2 Loop Processing Failure: {e}")
                     config.status_states["rig2_hw"] = "not_responding"
 
-        # Safe pacing interval to protect CPU core utilization and prevent serial queue blocking
         time.sleep(0.015)

@@ -1,116 +1,154 @@
-import time
 import json
+import time
 import websocket
 import threading
 import config
 
-# Global variables for the shared state
-_shared_ws = None
+# Connection state tracking variables
+_ws_client = None
 _ws_lock = threading.Lock()
+_connected = False
 
-def send_to_sdrconnect_fast(freq, mode):
-    """Sends immediate outbound parameters with explicit string coercion to prevent formatting shifts."""
-    global _shared_ws
+def get_sdrconnect_ws():
+    """Retrieves or creates a persistent background WebSocket client connection."""
+    global _ws_client, _connected
+    
     if not config.CONFIG.get("SDRCONNECT_ENABLED", False):
+        config.status_states["sdrconnect"] = "offline"
+        return None
+        
+    with _ws_lock:
+        if _connected and _ws_client and _ws_client.connected:
+            config.status_states["sdrconnect"] = "online"
+            return _ws_client
+            
+        _connected = False
+        if _ws_client:
+            try:
+                _ws_client.close()
+            except Exception:
+                pass
+            _ws_client = None
+            
+        host = config.CONFIG.get("SDRCONNECT_HOST", "127.0.0.1")
+        port = config.CONFIG.get("SDRCONNECT_PORT", 5454)
+        ws_url = f"ws://{host}:{port}/api/ws"
+        
+        try:
+            _ws_client = websocket.create_connection(ws_url, timeout=0.5)
+            _connected = True
+            config.status_states["sdrconnect"] = "online"
+            config.ui_print("✅ Connected to SDRconnect API WebSocket Engine.")
+            return _ws_client
+        except Exception as e:
+            config.status_states["sdrconnect"] = "offline"
+            return None
+
+def send_to_sdrconnect_fast(frequency_hz, mode_str, force_center=False):
+    """Dispatches targeted frequency adjustments directly to SDRconnect via WebSocket."""
+    ws = get_sdrconnect_ws()
+    if not ws:
         return
 
-    config.sdrconnect_blackout_until = time.time() + 2.5
+    try:
+        if force_center:
+            center_payload = {
+                "event_type": "set_property",
+                "property": "device_center_frequency",
+                "value": str(int(frequency_hz))
+            }
+            ws.send(json.dumps(center_payload))
+            time.sleep(0.04)
+            
+        vfo_payload = {
+            "event_type": "set_property",
+            "property": "device_vfo_frequency",
+            "value": str(int(frequency_hz))
+        }
+        ws.send(json.dumps(vfo_payload))
+        
+        sdr_mode = mode_str.upper()
+        if sdr_mode == "CW": sdr_mode = "CW_U"
+        
+        mode_payload = {
+            "event_type": "set_property",
+            "property": "device_vfo_mode",
+            "value": sdr_mode
+        }
+        ws.send(json.dumps(mode_payload))
+        config.status_states["sdrconnect"] = "online"
 
-    # Force format as a direct string representation of the integer Hz 
-    # to avoid JSON floating point or scientific notation truncation bugs.
-    freq_str = str(int(freq))
-
-    payload = {
-        "event_type": "set_property",
-        "property": "device_vfo_frequency",
-        "value": freq_str
-    }
-
-    def _async_send():
-        global _shared_ws
+    except Exception as e:
+        global _connected
+        print(f"⚠️ SDRconnect WS transmission error: {e}")
         with _ws_lock:
-            if _shared_ws is None:
-                return
-            try:
-                _shared_ws.send(json.dumps(payload))
-            except Exception as e:
-                config.ui_print(f"⚠️ Outbound send failed: {e}")
+            _connected = False
+            config.status_states["sdrconnect"] = "offline"
 
-    threading.Thread(target=_async_send, daemon=True).start()
-
+def sync_to_sdrconnect(frequency_hz, mode_str):
+    """Alias mapping wrapper for UI compatibility."""
+    send_to_sdrconnect_fast(frequency_hz, mode_str, force_center=False)
 
 def sdrconnect_heartbeat_loop():
-    """Main background supervisor. Handles connections, cleanups, and auto-recovers gracefully."""
-    global _shared_ws
+    """Background thread loop handling both keepalive pings and inbound event streaming."""
+    last_ping_time = 0
+    last_processed_freq = 0  # Deduplicate rapid identical packets
     
-    if not hasattr(config, 'sdrconnect_blackout_until'):
-        config.sdrconnect_blackout_until = 0.0
-
     while True:
-        if config.CONFIG.get("SDRCONNECT_ENABLED", False):
-            host = config.CONFIG.get("SDRCONNECT_HOST", "127.0.0.1")
-            port = int(config.CONFIG.get("SDRCONNECT_PORT", 5454))
-            ws_url = f"ws://{host}:{port}"
+        ws = get_sdrconnect_ws()
+        if not ws:
+            time.sleep(2.0)
+            continue
             
+        try:
+            current_time = time.time()
+            
+            # 1. Send keepalive ping every 5 seconds
+            if current_time - last_ping_time >= 5.0:
+                ws.send(json.dumps({"event_type": "ping"}))
+                last_ping_time = current_time
+            
+            # 2. Block briefly to look for incoming VFO changes from SDRconnect software
+            ws.settimeout(0.1)
             try:
-                # Attempt to establish/re-establish connection
-                with _ws_lock:
-                    if _shared_ws is None:
-                        _shared_ws = websocket.create_connection(ws_url, timeout=3.0)
-                        config.status_states["sdrconnect"] = "online"
-                        config.ui_print("🔌 Persistent link established with SDRconnect API.")
-                
-                # Active streaming listener loop
-                while config.CONFIG.get("SDRCONNECT_ENABLED", False):
-                    try:
-                        # Grab streaming socket packets
-                        message = _shared_ws.recv()
-                        data = json.loads(message)
+                message = ws.recv()
+                if message:
+                    data = json.loads(message)
+                    event = data.get("event_type")
+                    prop = data.get("property")
+                    
+                    # Intercept waterfall clicks or software tuning events
+                    if event in ["property_changed", "get_property_response"] and prop == "device_vfo_frequency":
+                        sdr_freq = int(data.get("value", 0))
                         
-                        # 1. Drop outbound confirmation reflections 
-                        if data.get("event_type") == "set_property_response":
-                            continue
-
-                        # 2. Drop updates if our physical radio dial blackout is active
-                        if time.time() < config.sdrconnect_blackout_until:
-                            continue
-
-                        # 3. Capture real user mouse clicks on the waterfall
-                        if data.get("event_type") == "property_changed" and data.get("property") == "device_vfo_frequency":
-                            # Strip any leading zeros or whitespace that SDRconnect might be padding
-                            raw_val = data.get("value", "0").strip()
-                            new_freq = int(raw_val)
-                            
+                        if sdr_freq > 0 and sdr_freq != last_processed_freq:
                             target_rig = config.current_sdrconnect_target_rig
                             
-                            if abs(new_freq - config.last_freqs[target_rig]) > config.CONFIG["FREQ_TOLERANCE"]:
-                                config.ui_print(f"🎯 [SDRconnect Mouse Click] Waterfall Match: {new_freq} Hz")
+                            # Check tolerance against last known hardware frequency
+                            if abs(sdr_freq - config.last_freqs[target_rig]) > config.CONFIG["FREQ_TOLERANCE"]:
                                 
-                                with config.queue_lock:
-                                    config.tune_queue.append((target_rig, new_freq, "USB", "sdrconnect"))
+                                # OPTIMIZED: Use a highly responsive 300ms window instead of a multi-second lockout
+                                if not hasattr(config, 'last_sdr_write_time') or (current_time - config.last_sdr_write_time > 0.3):
+                                    print(f"📥 [SDRconnect Waterfall Click] Extracted VFO -> {sdr_freq} Hz")
                                     
-                    except websocket.WebSocketTimeoutException:
-                        continue # Timeouts are fine, loop back and listen for more data
-                        
-            except Exception as e:
-                # Connection dropped, reset the tracking state
-                config.status_states["sdrconnect"] = "offline"
-                config.ui_print(f"📡 SDRconnect disconnected or offline. Retrying in 3s...")
+                                    # Update sync trackers instantly before the queue processing loop executes
+                                    config.last_sdr_write_time = current_time
+                                    config.last_freqs[target_rig] = sdr_freq
+                                    last_processed_freq = sdr_freq
+                                    
+                                    # Tell the OmniRig engine to immediately update the rig
+                                    with config.queue_lock:
+                                        # Clear pending outdated items to keep response snappier
+                                        config.tune_queue.clear() 
+                                        config.tune_queue.append((target_rig, sdr_freq, "USB", "sdrconnect"))
+                                        
+            except websocket.WebSocketTimeoutException:
+                pass  # Timeout releases the socket lock briefly, which is expected behavior
                 
-                with _ws_lock:
-                    if _shared_ws:
-                        try:
-                            _shared_ws.close()
-                        except:
-                            pass
-                        _shared_ws = None
-        else:
-            config.status_states["sdrconnect"] = "offline"
+        except Exception as e:
+            print(f"⚠️ SDRconnect event processing error: {e}")
+            global _connected
             with _ws_lock:
-                if _shared_ws:
-                    try: _shared_ws.close()
-                    except: pass
-                    _shared_ws = None
-            
-        # Quiet cooldown delay before attempting a full reconnection cycle
-        time.sleep(3.0)
+                _connected = False
+            config.status_states["sdrconnect"] = "offline"
+            time.sleep(1.0)
