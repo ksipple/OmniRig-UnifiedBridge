@@ -22,7 +22,11 @@ CONFIG = {
     "SDRCONNECT_ENABLED": False,       # Toggle control for SDRconnect
     "SDRCONNECT_HOST": "127.0.0.1",    # SDRconnect Client IP
     "SDRCONNECT_PORT": 5454,           # Default SDRconnect WebSocket port
-    "SDRCONNECT_SYNC_VFO": True
+    "SDRCONNECT_SYNC_VFO": True,
+    "WSJTX_ENABLE": True,
+    "WSJTX_IP": "127.0.0.1",       # Standard default multicast IP group (or 127.0.0.1 for unicast)
+    "WSJTX_PORT": 2237,            # Standard WSJT-X default network UDP port
+    "WSJTX_MODE": "Unicast"     # Options: "Multicast" or "Unicast"
 }
 
 def load_config():

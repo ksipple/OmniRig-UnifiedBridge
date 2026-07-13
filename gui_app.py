@@ -12,7 +12,7 @@ class OptionsDialog(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("Bridge Settings & Parameters")
-        self.geometry("450x640")  # Expanded slightly to fit all options cleanly
+        self.geometry("450x820")  # Expanded cleanly to host WSJT-X inputs
         self.configure(bg="#252526")
         self.transient(parent)
         self.grab_set()
@@ -111,6 +111,39 @@ class OptionsDialog(tk.Toplevel):
         self.ent_sdr_port.grid(row=current_row, column=1, sticky='ew', padx=15, pady=6)
         current_row += 1
 
+        # WSJT-X Configuration Section inside Settings Modal
+        lbl_wsjtx_head = tk.Label(self, text=" WSJT-X / FT8 Settings ", font=('Helvetica', 10, 'bold'), bg="#252526", fg="#00ffcc")
+        lbl_wsjtx_head.grid(row=current_row, column=0, columnspan=2, pady=(15, 6), padx=10, sticky='w')
+        current_row += 1
+
+        self.var_wsjtx_enabled = tk.BooleanVar(value=config.CONFIG.get("WSJTX_ENABLE", True))
+        lbl_ws_enable = tk.Label(self, text="Enable WSJT-X Listener:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
+        lbl_ws_enable.grid(row=current_row, column=0, sticky='e', padx=15, pady=6)
+        chk_ws = tk.Checkbutton(self, variable=self.var_wsjtx_enabled, bg="#252526", activebackground="#252526", selectcolor="#1e1e1e")
+        chk_ws.grid(row=current_row, column=1, sticky='w', padx=15, pady=6)
+        current_row += 1
+
+        lbl_wsjtx_mode = tk.Label(self, text="Network Mode:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
+        lbl_wsjtx_mode.grid(row=current_row, column=0, sticky='e', padx=15, pady=6)
+        self.combo_dialog_mode = ttk.Combobox(self, values=["Multicast", "Unicast"], state="readonly", width=12)
+        self.combo_dialog_mode.set(config.CONFIG.get("WSJTX_MODE", "Multicast"))
+        self.combo_dialog_mode.grid(row=current_row, column=1, sticky='w', padx=15, pady=6)
+        current_row += 1
+
+        lbl_wsjtx_ip = tk.Label(self, text="WSJT-X IP Address:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
+        lbl_wsjtx_ip.grid(row=current_row, column=0, sticky='e', padx=15, pady=6)
+        self.ent_dialog_ip = tk.Entry(self, bg="#1e1e1e", fg="#ffffff", insertbackground='white', relief='flat', font=('Consolas', 9))
+        self.ent_dialog_ip.insert(0, str(config.CONFIG.get("WSJTX_IP", "224.0.0.1")))
+        self.ent_dialog_ip.grid(row=current_row, column=1, sticky='ew', padx=15, pady=6)
+        current_row += 1
+
+        lbl_wsjtx_port = tk.Label(self, text="UDP Listener Port:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
+        lbl_wsjtx_port.grid(row=current_row, column=0, sticky='e', padx=15, pady=6)
+        self.ent_dialog_port = tk.Entry(self, bg="#1e1e1e", fg="#ffffff", insertbackground='white', relief='flat', font=('Consolas', 9))
+        self.ent_dialog_port.insert(0, str(config.CONFIG.get("WSJTX_PORT", 2237)))
+        self.ent_dialog_port.grid(row=current_row, column=1, sticky='ew', padx=15, pady=6)
+        current_row += 1
+
         # Save/Cancel Action Buttons (Placed strictly at the bottom)
         btn_frame = tk.Frame(self, bg="#252526")
         btn_frame.grid(row=current_row, column=0, columnspan=2, pady=20, sticky='ew')
@@ -128,6 +161,7 @@ class OptionsDialog(tk.Toplevel):
             tol = int(self.entries["FREQ_TOLERANCE"].get())
             w_max = int(self.entries["WAVELOG_MAX_INTERVAL"].get())
             sdr_port = int(self.ent_sdr_port.get())
+            ws_port = int(self.ent_dialog_port.get() or 2237)
             
             config.CONFIG["FLDIGI_URL"] = self.entries["FLDIGI_URL"].get().strip()
             config.CONFIG["FORCE_MODE_SELECTION"] = self.entries["FORCE_MODE_SELECTION"].get().strip()
@@ -142,10 +176,19 @@ class OptionsDialog(tk.Toplevel):
             config.CONFIG["START_POLL_RIG_1"] = self.var_poll_r1.get()
             config.CONFIG["START_POLL_RIG_2"] = self.var_poll_r2.get()
             
-            # Persist dynamic SDRconnect inputs
             config.CONFIG["SDRCONNECT_ENABLED"] = self.var_sdr_enabled.get()
             config.CONFIG["SDRCONNECT_HOST"] = self.ent_sdr_host.get().strip()
             config.CONFIG["SDRCONNECT_PORT"] = sdr_port
+
+            # Commit Dialog fields down into configurations layer
+            config.CONFIG["WSJTX_ENABLE"] = self.var_wsjtx_enabled.get()
+            config.CONFIG["WSJTX_MODE"] = self.combo_dialog_mode.get()
+            config.CONFIG["WSJTX_IP"] = self.ent_dialog_ip.get().strip()
+            config.CONFIG["WSJTX_PORT"] = ws_port
+
+            # Sync active controls in Main App interface automatically
+            if hasattr(self.master, 'wsjtx_enabled_var'):
+                self.master.wsjtx_enabled_var.set(self.var_wsjtx_enabled.get())
 
             self.master.update_labels_from_config()
             config.fldigi_blackout_until = time.time() + 1.0
@@ -161,7 +204,7 @@ class BridgeGUIApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("OmniRig - Fldigi - Wavelog Configurable Bridge")
-        self.geometry("820x620")
+        self.geometry("820x680")  # Trimmed slightly since options moved to dialog modal
         self.configure(bg="#1e1e1e")
         
         self.style = ttk.Style()
@@ -175,7 +218,6 @@ class BridgeGUIApp(tk.Tk):
         self.create_widgets()
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         
-        # Initialize individual buttons text/colors matching the loaded polling configs
         self.sync_polling_buttons_to_state()
         self.update_gui_indicators()
 
@@ -219,7 +261,6 @@ class BridgeGUIApp(tk.Tk):
         ops_lf = ttk.LabelFrame(sys_frame, text=" ROUTING & UTILITIES ")
         ops_lf.pack(side='right', fill='both', padx=5, pady=5, expand=True)
         
-        # 1. Fldigi Target Routing Row
         target_container = tk.Frame(ops_lf, bg="#1e1e1e")
         target_container.pack(fill='x', padx=10, pady=6)
         
@@ -230,7 +271,6 @@ class BridgeGUIApp(tk.Tk):
         self.combo_target.pack(side='left', padx=5)
         self.combo_target.bind("<<ComboboxSelected>>", self.on_fldigi_target_changed)
         
-        # 2. SDRconnect Target Routing Row
         sdr_target_container = tk.Frame(ops_lf, bg="#1e1e1e")
         sdr_target_container.pack(fill='x', padx=10, pady=6)
         
@@ -241,7 +281,6 @@ class BridgeGUIApp(tk.Tk):
         self.combo_sdr_target.pack(side='left', padx=5)
         self.combo_sdr_target.bind("<<ComboboxSelected>>", self.on_sdrconnect_target_changed)
 
-        # 3. Utilities Button Row (Placed at the bottom of the container)
         btn_row = tk.Frame(ops_lf, bg="#1e1e1e")
         btn_row.pack(fill='x', padx=10, pady=6, side='bottom')
 
@@ -263,7 +302,6 @@ class BridgeGUIApp(tk.Tk):
         cards_frame = tk.Frame(self, bg="#1e1e1e")
         cards_frame.pack(fill='x', padx=15, pady=5)
 
-        # Rig 1 Visual Card Box
         self.rig1_lf = ttk.LabelFrame(cards_frame, text=" RIG 1 ")
         self.rig1_lf.pack(side='left', fill='both', expand=True, padx=5, pady=5)
 
@@ -278,7 +316,6 @@ class BridgeGUIApp(tk.Tk):
                                      font=('Helvetica', 8, 'bold'), relief='flat', command=lambda: self.toggle_rig_polling(1))
         self.btn_poll_r1.pack(pady=6)
 
-        # Rig 2 Visual Card Box
         self.rig2_lf = ttk.LabelFrame(cards_frame, text=" RIG 2 ")
         self.rig2_lf.pack(side='right', fill='both', expand=True, padx=5, pady=5)
 
@@ -292,6 +329,14 @@ class BridgeGUIApp(tk.Tk):
         self.btn_poll_r2 = tk.Button(self.rig2_lf, text="Polling: Active", bg="#1b5e20", fg="white", 
                                      font=('Helvetica', 8, 'bold'), relief='flat', command=lambda: self.toggle_rig_polling(2))
         self.btn_poll_r2.pack(pady=6)
+
+        # Simple checkbox strip for rapid main interface control
+        quick_wsjtx_strip = tk.Frame(self, bg="#1e1e1e")
+        quick_wsjtx_strip.pack(fill="x", padx=15, pady=4)
+        self.wsjtx_enabled_var = tk.BooleanVar(value=config.CONFIG.get("WSJTX_ENABLE", True))
+        cb = ttk.Checkbutton(quick_wsjtx_strip, text="Active WSJT-X Monitor Link", variable=self.wsjtx_enabled_var, 
+                            command=lambda: [config.CONFIG.update({"WSJTX_ENABLE": self.wsjtx_enabled_var.get()}), config.save_config()])
+        cb.pack(side="left", padx=5)
 
         log_lf = ttk.LabelFrame(self, text=" LIVE SYSTEM ACTIVITY LOG ")
         log_lf.pack(fill='both', expand=True, padx=15, pady=10)
@@ -332,11 +377,9 @@ class BridgeGUIApp(tk.Tk):
         r1_val = f"Rig 1: {config.CONFIG['RADIO_1_NAME']}"
         r2_val = f"Rig 2: {config.CONFIG['RADIO_2_NAME']}"
         
-        # Keep Fldigi combobox populated
         self.combo_target['values'] = [r1_val, r2_val]
         self.combo_target.set(r1_val if config.current_fldigi_target_rig == 1 else r2_val)
 
-        # >>> ADD THIS TO POPULATE THE NEW SDRCONNECT COMBOBOX <<<
         self.combo_sdr_target['values'] = [r1_val, r2_val]
         self.combo_sdr_target.set(r1_val if config.current_sdrconnect_target_rig == 1 else r2_val)
 
@@ -394,12 +437,7 @@ class BridgeGUIApp(tk.Tk):
         if freq_to_push > 0 and config.status_states[f"rig{target_rig}_hw"] == "online":
             config.ui_print(f"🔄 Sync Target Shifted: Immediately sending Rig {target_rig} VFO ({freq_to_push} Hz) to Fldigi...")
             threading.Thread(target=network_workers.sync_to_fldigi, args=(freq_to_push, friendly_mode), daemon=True).start()
-        
-        if freq_to_push > 0 and config.status_states[f"rig{target_rig}_hw"] == "online":
-            config.ui_print(f"🔄 Sync Target Shifted: Immediately sending Rig {target_rig} VFO ({freq_to_push} Hz) to Fldigi...")
-            threading.Thread(target=network_workers.sync_to_fldigi, args=(freq_to_push, friendly_mode), daemon=True).start()
             
-            # >>> ADD THIS SDRCONNECT RIG-SWITCH TRIGGER <<<
             if config.CONFIG.get("SDRCONNECT_ENABLED", False):
                 import sdrconnect_worker
                 threading.Thread(target=sdrconnect_worker.sync_to_sdrconnect, args=(freq_to_push, friendly_mode), daemon=True).start()
@@ -430,25 +468,22 @@ class BridgeGUIApp(tk.Tk):
         self.after(0, append)
 
     def update_gui_indicators(self):
-        # Insert into your update_gui_indicators loop:
         sdr_status = config.status_states.get("sdrconnect", "offline")
         is_sdr_active = config.CONFIG.get("SDRCONNECT_ENABLED", False)
 
-        # Gray out if the option is deactivated, otherwise show active Green / broken Red
         sdr_color = "#555555" if not is_sdr_active else ("#00ff00" if sdr_status == "online" else "#ff0000")
-        # Assign to an added status canvas or label item as preferred.
+        
         def get_color_for_state(state, is_enabled):
-            if not is_enabled: return "#555555"          # Grey for Disabled status
-            if state == "online": return "#00ff00"       # Green
-            if state == "not_responding": return "#ff9900" # Orange
-            return "#ff0000"                             # Red
+            if not is_enabled: return "#555555"          
+            if state == "online": return "#00ff00"       
+            if state == "not_responding": return "#ff9900" 
+            return "#ff0000"                             
+            
         self.draw_status_dot(self.canvas_sdr, sdr_color)
         self.lbl_sdr_status.config(
             text="SDRconnect: Active" if sdr_status == "online" and is_sdr_active else ("SDRconnect: Offline" if is_sdr_active else "SDRconnect: Disabled"),
             fg="#ffffff" if sdr_status == "online" and is_sdr_active else "#777777"
         )
-
-
 
         # Rig 1 Box View Rendering
         if config.rig_polling_enabled[1]:
@@ -488,7 +523,6 @@ class BridgeGUIApp(tk.Tk):
             self.lbl_r2_freq_b.config(text="VFO-B: --", fg="#555555")
             self.lbl_r2_mode.config(text="MODE: --")
 
-        # Update Sidebar Link Status Lights with explicit checks for dynamic disabled state overrides
         r1_st = config.status_states["rig1_hw"]
         self.draw_status_dot(self.canvas_r1_hw, get_color_for_state(r1_st, config.rig_polling_enabled[1]))
         if not config.rig_polling_enabled[1]:
@@ -513,4 +547,7 @@ class BridgeGUIApp(tk.Tk):
 
         self.after(200, self.update_gui_indicators)
 
-    def on_close(self): self.destroy(); import sys; sys.exit(0)
+    def on_close(self): 
+        self.destroy()
+        import sys
+        sys.exit(0)

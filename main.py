@@ -39,7 +39,7 @@ def trigger_startup_sync():
 
 def start_background_subsystems():
     """Spins off processing thread workers once initialization ticks complete."""
-    # 📌 FIXED: Explicitly verify if your engine function is named 'omnirig_worker_thread' or 'omnirig_processing_loop'
+    
     if hasattr(omnirig_engine, 'omnirig_processing_loop'):
         threading.Thread(target=omnirig_engine.omnirig_processing_loop, daemon=True, name="OmniRigLoop").start()
     else:
@@ -49,8 +49,8 @@ def start_background_subsystems():
     threading.Thread(target=network_workers.parameterized_tcp_listener, args=(1,), daemon=True, name="TCP_Rig1").start()
     threading.Thread(target=network_workers.parameterized_tcp_listener, args=(2,), daemon=True, name="TCP_Rig2").start()
     threading.Thread(target=sdrconnect_worker.sdrconnect_heartbeat_loop, daemon=True, name="SDRconnectWS").start()
+    threading.Thread(target=network_workers.wsjtx_udp_tracking_listener, daemon=True, name="WSJTXListener").start()
     threading.Thread(target=trigger_startup_sync, daemon=True, name="StartupSync").start()
-
 
 if __name__ == '__main__':
     # Initialize UI Window instance
