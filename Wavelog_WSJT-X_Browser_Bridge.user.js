@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Wavelog WSJT-X Bridge
 // @namespace    http://tampermonkey.net/
-// @version      1.7
-// @description  Guarantees data injection first, then breaks sandbox to trigger lookups
+// @version      2.0
+// @description  Guarantees data injection first, then breaks sandbox to trigger lookups & safely resets form/map on clear via Esc key trigger
 // @match        *://*/index.php/qso*
 // @match        *://*/qso*
 // @grant        unsafeWindow
@@ -17,6 +17,53 @@
     // Grab the page's actual window object (bypassing the Tampermonkey sandbox)
     const pageWindow = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
+    // ==========================================
+    // 🧼 FORM & MAP RESET FUNCTION
+    // ==========================================
+    function triggerWavelogFormReset() {
+        console.log("🧼 [Bridge] WSJT-X callsign cleared. Triggering native Escape-Key reset sequence...");
+
+        const callsignInput = document.getElementById("callsign") || document.querySelector("input[name='callsign']");
+        
+        if (callsignInput) {
+            // Focus the field first so the key event lands on the correct element
+            callsignInput.focus();
+
+            // Create a synthetic "Escape" keydown/keyup event sequence
+            const escDown = new KeyboardEvent('keydown', {
+                key: 'Escape',
+                code: 'Escape',
+                keyCode: 27,
+                which: 27,
+                bubbles: true,
+                cancelable: true
+            });
+
+            const escUp = new KeyboardEvent('keyup', {
+                key: 'Escape',
+                code: 'Escape',
+                keyCode: 27,
+                which: 27,
+                bubbles: true,
+                cancelable: true
+            });
+
+            // Dispatch both events to kick off Wavelog's native event listeners
+            callsignInput.dispatchEvent(escDown);
+            callsignInput.dispatchEvent(escUp);
+
+            // Defocus (blur) the input so it doesn't leave an active typing cursor in an empty box
+            callsignInput.blur();
+
+            console.log("🎯 [Bridge] Successfully simulated 'Escape' key reset on the form.");
+        } else {
+            console.warn("⚠️ Could not locate callsign field to dispatch Escape key event.");
+        }
+    }
+
+    // ==========================================
+    // 🚀 FORM INJECTION & LOOKUP FUNCTION
+    // ==========================================
     function triggerWavelogLookup(callsign, locator) {
         // 1. ALWAYS grab elements natively first to guarantee data gets in the boxes
         const callsignInput = document.getElementById("callsign") || document.querySelector("input[name='callsign']");
@@ -40,13 +87,13 @@
         const $ = pageWindow.$ || pageWindow.jQuery;
         if ($) {
             const $callsign = $(callsignInput);
-            // Clear jQuery's internal change tracker cache
-            $callsign.data('oldVal', ''); 
+            
+            // Force Wavelog to execute its reactive listeners
             $callsign.trigger('input');
             $callsign.trigger('change');
             $callsign.trigger('keyup');
 
-            // Force Wavelog to execute its blur listener
+            // Force Wavelog to execute its blur/lookup listener
             setTimeout(() => {
                 $callsign.trigger('blur');
                 console.log("🎯 [Bridge] Triggered jQuery blur on callsign.");
@@ -59,7 +106,7 @@
             }, 100);
         }
 
-        // 4. Try running Wavelog's native functions directly
+        // 4. Try running Wavelog's native functions directly as a secondary safety measure
         try {
             if (typeof pageWindow.lookupCheck === "function") {
                 pageWindow.lookupCheck();
@@ -92,6 +139,9 @@
         }
     }
 
+    // ==========================================
+    // 🔌 WEBSOCKET CLIENT LIFECYCLE
+    // ==========================================
     function connect() {
         console.log("🔌 Connecting to WSJT-X Python Bridge...");
         socket = new WebSocket(wsUrl);
@@ -105,7 +155,10 @@
                 const data = JSON.parse(event.data);
                 console.log("📥 Received from Bridge:", data);
 
-                if (data.callsign) {
+                // Evaluate whether packet is an update or a structural UI clear flag
+                if (data.clear === true) {
+                    triggerWavelogFormReset();
+                } else if (data.callsign) {
                     triggerWavelogLookup(data.callsign, data.locator);
                 }
             } catch (err) {
@@ -123,6 +176,6 @@
         };
     }
 
-    // Start connection
+    // Start connection runtime loop
     connect();
 })();

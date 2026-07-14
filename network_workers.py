@@ -368,6 +368,9 @@ def wsjtx_udp_tracking_listener():
     
     config.ui_print("📡 [WSJT-X Listener] Spinning up network background worker...")
     
+    # Internal tracker flag to evaluate true state transitions
+    was_callsign_active = False
+    
     while True:
         # WSJTX_ENABLE is now controlled safely from the Settings Dialog
         if not config.CONFIG.get("WSJTX_ENABLE", True):
@@ -427,14 +430,27 @@ def wsjtx_udp_tracking_listener():
                         dx_grid, offset = decode_utf8_string(message, offset)
                         dx_grid = dx_grid.strip() if dx_grid else ""
                         
-                        if dx_callsign:
+                        # --- CONFIGURED LOGIC STATE TRACKER EVALUATION ---
+                        if dx_callsign == "":
+                            # Case A: Transitioning from filled callsign to empty space
+                            if was_callsign_active:
+                                config.ui_print("📉 [WSJT-X Clear Focus] Callsign cleared in UI. Sending command to reset browser form layout.")
+                                current_active_call = ""
+                                current_active_grid = ""
+                                was_callsign_active = False
+                                
+                                if config.CONFIG.get("SEND_TO_BROWSER", True):
+                                    clear_payload = json.dumps({"clear": True})
+                                    broadcast_ws_message(clear_payload)
+                        else:
+                            # Case B: Target focus updated or added
+                            was_callsign_active = True
                             if dx_callsign != current_active_call or dx_grid != current_active_grid:
                                 current_active_call = dx_callsign
                                 current_active_grid = dx_grid
                                 
                                 config.ui_print(f"🎯 [WSJT-X Focus] Active: {dx_callsign} | Grid: {dx_grid or 'None'}")
                                 
-                                # --- THE FIX: Only broadcast if browser sending is globally enabled ---
                                 if config.CONFIG.get("SEND_TO_BROWSER", True):
                                     ws_payload = json.dumps({
                                         "callsign": dx_callsign,
