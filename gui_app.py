@@ -12,48 +12,60 @@ class OptionsDialog(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("Bridge Settings & Parameters")
-        self.geometry("450x820")  # Expanded cleanly to host WSJT-X inputs
+        self.geometry("480x880")  # Resized to fit beautifully structured sections
         self.configure(bg="#252526")
         self.transient(parent)
         self.grab_set()
-        self.grid_columnconfigure(1, weight=1)
+        
+        self.container = tk.Frame(self, bg="#252526", padx=10, pady=10)
+        self.container.pack(fill="both", expand=True)
+        self.container.grid_columnconfigure(0, weight=1)
+        
         self.create_fields()
 
     def create_fields(self):
-        lbl_info = tk.Label(self, text="Configure System Parameters", font=('Helvetica', 11, 'bold'), bg="#252526", fg="#00ffcc")
-        lbl_info.grid(row=0, column=0, columnspan=2, pady=15, padx=10, sticky='w')
+        lbl_info = tk.Label(self.container, text="Configure System Parameters", font=('Helvetica', 12, 'bold'), bg="#252526", fg="#00ffcc")
+        lbl_info.pack(anchor="w", pady=(0, 15))
 
         self.entries = {}
-        fields = [
-            ("FLDIGI_URL", "Fldigi XML-RPC URL:"),
-            ("FORCE_MODE_SELECTION", "Force Mode Selection:"),
-            ("WAVELOG_URL", "Wavelog URL:"),
-            ("WAVELOG_API_KEY", "Wavelog API Key:"),
-            ("RADIO_1_NAME", "Rig 1 Radio Name:"),
-            ("RADIO_2_NAME", "Rig 2 Radio Name:"),
-            ("PORT_RADIO_1", "Rig 1 TCP Inbound Port:"),
-            ("PORT_RADIO_2", "Rig 2 TCP Inbound Port:"),
-            ("FREQ_TOLERANCE", "Frequency Sync Tolerance (Hz):"),
-            ("WAVELOG_MAX_INTERVAL", "Max Time Without Wavelog Update (s):")
+
+        # Configure dropdown population style for system dialogs with high contrast
+        self.option_add('*TCombobox*Listbox.background', '#1e1e1e')
+        self.option_add('*TCombobox*Listbox.foreground', '#ffffff')
+        self.option_add('*TCombobox*Listbox.selectBackground', '#007acc')
+        self.option_add('*TCombobox*Listbox.selectForeground', '#ffffff')
+
+        # ----------------------------------------------------
+        # SECTION 1: Core Logging & Wavelog Services
+        # ----------------------------------------------------
+        sec_wavelog = tk.LabelFrame(self.container, text=" Core Logging & Wavelog Services ", bg="#252526", fg="#00ffcc", font=('Helvetica', 9, 'bold'), padx=10, pady=8)
+        sec_wavelog.pack(fill="x", pady=6)
+        sec_wavelog.grid_columnconfigure(1, weight=1)
+
+        wavelog_fields = [
+            ("FLDIGI_URL", "Fldigi XML-RPC URL:", 0),
+            ("FORCE_MODE_SELECTION", "Force Mode Selection:", 1),
+            ("WAVELOG_URL", "Wavelog URL:", 2),
+            ("WAVELOG_API_KEY", "Wavelog API Key:", 3),
+            ("WAVELOG_MAX_INTERVAL", "Max Update Interval (s):", 4)
         ]
 
-        current_row = 1
-        for key, label_text in fields:
-            lbl = tk.Label(self, text=label_text, bg="#252526", fg="#ffffff", font=('Helvetica', 9))
-            lbl.grid(row=current_row, column=0, sticky='e', padx=15, pady=6)
-            
+        for key, label_text, r_idx in wavelog_fields:
+            lbl = tk.Label(sec_wavelog, text=label_text, bg="#252526", fg="#ffffff", font=('Helvetica', 9))
+            lbl.grid(row=r_idx, column=0, sticky='e', padx=5, pady=4)
+
             if key == "FORCE_MODE_SELECTION":
-                combobox = ttk.Combobox(self, values=["NONE", "CW", "CW-R", "LSB", "USB", "FM", "AM", "DATA", "DATA-R"], state="readonly")
+                combobox = ttk.Combobox(sec_wavelog, values=["NONE", "CW", "CW-R", "LSB", "USB", "FM", "AM", "DATA", "DATA-R"], state="readonly")
                 curr_val = config.CONFIG.get("FORCE_MODE_SELECTION", "DATA").upper()
                 combobox.set(curr_val if curr_val in combobox['values'] else "DATA")
-                combobox.grid(row=current_row, column=1, sticky='ew', padx=15, pady=6)
+                combobox.grid(row=r_idx, column=1, sticky='ew', padx=5, pady=4)
                 self.entries[key] = combobox
             elif key == "WAVELOG_API_KEY":
-                entry_frame = tk.Frame(self, bg="#252526")
-                entry_frame.grid(row=current_row, column=1, sticky='ew', padx=15, pady=6)
+                entry_frame = tk.Frame(sec_wavelog, bg="#252526")
+                entry_frame.grid(row=r_idx, column=1, sticky='ew', padx=5, pady=4)
                 
                 ent = tk.Entry(entry_frame, bg="#1e1e1e", fg="#ffffff", insertbackground='white', relief='flat', font=('Consolas', 9), show='*')
-                ent.insert(0, str(config.CONFIG[key]))
+                ent.insert(0, str(config.CONFIG.get(key, "")))
                 ent.pack(side='left', fill='x', expand=True)
                 self.entries[key] = ent
                 
@@ -68,88 +80,111 @@ class OptionsDialog(tk.Toplevel):
                 btn_toggle = tk.Button(entry_frame, text="👁️", bg="#3c3c3c", fg="white", font=('Helvetica', 8), relief='flat', command=toggle_api_key_visibility, width=3)
                 btn_toggle.pack(side='right', padx=(5, 0))
             else:
-                ent = tk.Entry(self, bg="#1e1e1e", fg="#ffffff", insertbackground='white', relief='flat', font=('Consolas', 9))
-                ent.insert(0, str(config.CONFIG[key]))
-                ent.grid(row=current_row, column=1, sticky='ew', padx=15, pady=6)
+                ent = tk.Entry(sec_wavelog, bg="#1e1e1e", fg="#ffffff", insertbackground='white', relief='flat', font=('Consolas', 9))
+                ent.insert(0, str(config.CONFIG.get(key, "")))
+                ent.grid(row=r_idx, column=1, sticky='ew', padx=5, pady=4)
                 self.entries[key] = ent
-            current_row += 1
 
-        # Poll on Startup checkbox layout adjustments
+        # ----------------------------------------------------
+        # SECTION 2: Rig Connection & Polling
+        # ----------------------------------------------------
+        sec_rigs = tk.LabelFrame(self.container, text=" Rig Connection & Polling Settings ", bg="#252526", fg="#00ffcc", font=('Helvetica', 9, 'bold'), padx=10, pady=8)
+        sec_rigs.pack(fill="x", pady=6)
+        sec_rigs.grid_columnconfigure(1, weight=1)
+
+        rig_fields = [
+            ("RADIO_1_NAME", "Rig 1 Radio Name:", 0),
+            ("RADIO_2_NAME", "Rig 2 Radio Name:", 1),
+            ("PORT_RADIO_1", "Rig 1 TCP Port:", 2),
+            ("PORT_RADIO_2", "Rig 2 TCP Port:", 3),
+            ("FREQ_TOLERANCE", "Freq Tolerance (Hz):", 4)
+        ]
+
+        for key, label_text, r_idx in rig_fields:
+            lbl = tk.Label(sec_rigs, text=label_text, bg="#252526", fg="#ffffff", font=('Helvetica', 9))
+            lbl.grid(row=r_idx, column=0, sticky='e', padx=5, pady=4)
+            ent = tk.Entry(sec_rigs, bg="#1e1e1e", fg="#ffffff", insertbackground='white', relief='flat', font=('Consolas', 9))
+            ent.insert(0, str(config.CONFIG.get(key, "")))
+            ent.grid(row=r_idx, column=1, sticky='ew', padx=5, pady=4)
+            self.entries[key] = ent
+
+        # Add start-polling checkboxes inline with proper contrasting colors
+        r_idx = len(rig_fields)
         self.var_poll_r1 = tk.BooleanVar(value=config.CONFIG.get("START_POLL_RIG_1", True))
-        lbl_p1 = tk.Label(self, text="Poll Rig 1 on Startup:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
-        lbl_p1.grid(row=current_row, column=0, sticky='e', padx=15, pady=6)
-        chk_p1 = tk.Checkbutton(self, variable=self.var_poll_r1, bg="#252526", activebackground="#252526", selectcolor="#1e1e1e")
-        chk_p1.grid(row=current_row, column=1, sticky='w', padx=15, pady=6)
-        current_row += 1
+        lbl_p1 = tk.Label(sec_rigs, text="Poll Rig 1 on Startup:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
+        lbl_p1.grid(row=r_idx, column=0, sticky='e', padx=5, pady=4)
+        chk_p1 = tk.Checkbutton(sec_rigs, variable=self.var_poll_r1, bg="#252526", fg="#ffffff", selectcolor="#1e1e1e", activebackground="#252526", activeforeground="#ffffff")
+        chk_p1.grid(row=r_idx, column=1, sticky='w', padx=5, pady=4)
 
+        r_idx += 1
         self.var_poll_r2 = tk.BooleanVar(value=config.CONFIG.get("START_POLL_RIG_2", True))
-        lbl_p2 = tk.Label(self, text="Poll Rig 2 on Startup:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
-        lbl_p2.grid(row=current_row, column=0, sticky='e', padx=15, pady=6)
-        chk_p2 = tk.Checkbutton(self, variable=self.var_poll_r2, bg="#252526", activebackground="#252526", selectcolor="#1e1e1e")
-        chk_p2.grid(row=current_row, column=1, sticky='w', padx=15, pady=6)
-        current_row += 1
+        lbl_p2 = tk.Label(sec_rigs, text="Poll Rig 2 on Startup:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
+        lbl_p2.grid(row=r_idx, column=0, sticky='e', padx=5, pady=4)
+        chk_p2 = tk.Checkbutton(sec_rigs, variable=self.var_poll_r2, bg="#252526", fg="#ffffff", selectcolor="#1e1e1e", activebackground="#252526", activeforeground="#ffffff")
+        chk_p2.grid(row=r_idx, column=1, sticky='w', padx=5, pady=4)
 
-        # SDRconnect UI Inputs
+        # ----------------------------------------------------
+        # SECTION 3: SDRconnect Integration
+        # ----------------------------------------------------
+        sec_sdr = tk.LabelFrame(self.container, text=" SDRconnect Integration ", bg="#252526", fg="#00ffcc", font=('Helvetica', 9, 'bold'), padx=10, pady=8)
+        sec_sdr.pack(fill="x", pady=6)
+        sec_sdr.grid_columnconfigure(1, weight=1)
+
         self.var_sdr_enabled = tk.BooleanVar(value=config.CONFIG.get("SDRCONNECT_ENABLED", False))
-        lbl_sdr = tk.Label(self, text="Enable SDRconnect WebSocket:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
-        lbl_sdr.grid(row=current_row, column=0, sticky='e', padx=15, pady=6)
-        chk_sdr = tk.Checkbutton(self, variable=self.var_sdr_enabled, bg="#252526", activebackground="#252526", selectcolor="#1e1e1e")
-        chk_sdr.grid(row=current_row, column=1, sticky='w', padx=15, pady=6)
-        current_row += 1
+        lbl_sdr = tk.Label(sec_sdr, text="Enable WebSocket Sync:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
+        lbl_sdr.grid(row=0, column=0, sticky='e', padx=5, pady=4)
+        chk_sdr = tk.Checkbutton(sec_sdr, variable=self.var_sdr_enabled, bg="#252526", fg="#ffffff", selectcolor="#1e1e1e", activebackground="#252526", activeforeground="#ffffff")
+        chk_sdr.grid(row=0, column=1, sticky='w', padx=5, pady=4)
 
-        lbl_sdr_host = tk.Label(self, text="WebSocket Host IP:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
-        lbl_sdr_host.grid(row=current_row, column=0, sticky='e', padx=15, pady=6)
-        self.ent_sdr_host = tk.Entry(self, bg="#1e1e1e", fg="#ffffff", insertbackground='white', relief='flat', font=('Consolas', 9))
+        lbl_sdr_host = tk.Label(sec_sdr, text="WebSocket Host IP:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
+        lbl_sdr_host.grid(row=1, column=0, sticky='e', padx=5, pady=4)
+        self.ent_sdr_host = tk.Entry(sec_sdr, bg="#1e1e1e", fg="#ffffff", insertbackground='white', relief='flat', font=('Consolas', 9))
         self.ent_sdr_host.insert(0, str(config.CONFIG.get("SDRCONNECT_HOST", "127.0.0.1")))
-        self.ent_sdr_host.grid(row=current_row, column=1, sticky='ew', padx=15, pady=6)
-        current_row += 1
+        self.ent_sdr_host.grid(row=1, column=1, sticky='ew', padx=5, pady=4)
 
-        lbl_sdr_port = tk.Label(self, text="WebSocket API Port:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
-        lbl_sdr_port.grid(row=current_row, column=0, sticky='e', padx=15, pady=6)
-        self.ent_sdr_port = tk.Entry(self, bg="#1e1e1e", fg="#ffffff", insertbackground='white', relief='flat', font=('Consolas', 9))
+        lbl_sdr_port = tk.Label(sec_sdr, text="WebSocket API Port:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
+        lbl_sdr_port.grid(row=2, column=0, sticky='e', padx=5, pady=4)
+        self.ent_sdr_port = tk.Entry(sec_sdr, bg="#1e1e1e", fg="#ffffff", insertbackground='white', relief='flat', font=('Consolas', 9))
         self.ent_sdr_port.insert(0, str(config.CONFIG.get("SDRCONNECT_PORT", 5454)))
-        self.ent_sdr_port.grid(row=current_row, column=1, sticky='ew', padx=15, pady=6)
-        current_row += 1
+        self.ent_sdr_port.grid(row=2, column=1, sticky='ew', padx=5, pady=4)
 
-        # WSJT-X Configuration Section inside Settings Modal
-        lbl_wsjtx_head = tk.Label(self, text=" WSJT-X / FT8 Settings ", font=('Helvetica', 10, 'bold'), bg="#252526", fg="#00ffcc")
-        lbl_wsjtx_head.grid(row=current_row, column=0, columnspan=2, pady=(15, 6), padx=10, sticky='w')
-        current_row += 1
+        # ----------------------------------------------------
+        # SECTION 4: WSJT-X Network Receiver Link
+        # ----------------------------------------------------
+        sec_wsjtx = tk.LabelFrame(self.container, text=" WSJT-X / FT8 Receiver Link ", bg="#252526", fg="#00ffcc", font=('Helvetica', 9, 'bold'), padx=10, pady=8)
+        sec_wsjtx.pack(fill="x", pady=6)
+        sec_wsjtx.grid_columnconfigure(1, weight=1)
 
         self.var_wsjtx_enabled = tk.BooleanVar(value=config.CONFIG.get("WSJTX_ENABLE", True))
-        lbl_ws_enable = tk.Label(self, text="Enable WSJT-X Listener:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
-        lbl_ws_enable.grid(row=current_row, column=0, sticky='e', padx=15, pady=6)
-        chk_ws = tk.Checkbutton(self, variable=self.var_wsjtx_enabled, bg="#252526", activebackground="#252526", selectcolor="#1e1e1e")
-        chk_ws.grid(row=current_row, column=1, sticky='w', padx=15, pady=6)
-        current_row += 1
+        lbl_ws_enable = tk.Label(sec_wsjtx, text="Enable WSJT-X Listener:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
+        lbl_ws_enable.grid(row=0, column=0, sticky='e', padx=5, pady=4)
+        chk_ws = tk.Checkbutton(sec_wsjtx, variable=self.var_wsjtx_enabled, bg="#252526", fg="#ffffff", selectcolor="#1e1e1e", activebackground="#252526", activeforeground="#ffffff")
+        chk_ws.grid(row=0, column=1, sticky='w', padx=5, pady=4)
 
-        lbl_wsjtx_mode = tk.Label(self, text="Network Mode:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
-        lbl_wsjtx_mode.grid(row=current_row, column=0, sticky='e', padx=15, pady=6)
-        self.combo_dialog_mode = ttk.Combobox(self, values=["Multicast", "Unicast"], state="readonly", width=12)
+        lbl_wsjtx_mode = tk.Label(sec_wsjtx, text="Network Mode:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
+        lbl_wsjtx_mode.grid(row=1, column=0, sticky='e', padx=5, pady=4)
+        self.combo_dialog_mode = ttk.Combobox(sec_wsjtx, values=["Multicast", "Unicast"], state="readonly", width=12)
         self.combo_dialog_mode.set(config.CONFIG.get("WSJTX_MODE", "Multicast"))
-        self.combo_dialog_mode.grid(row=current_row, column=1, sticky='w', padx=15, pady=6)
-        current_row += 1
+        self.combo_dialog_mode.grid(row=1, column=1, sticky='w', padx=5, pady=4)
 
-        lbl_wsjtx_ip = tk.Label(self, text="WSJT-X IP Address:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
-        lbl_wsjtx_ip.grid(row=current_row, column=0, sticky='e', padx=15, pady=6)
-        self.ent_dialog_ip = tk.Entry(self, bg="#1e1e1e", fg="#ffffff", insertbackground='white', relief='flat', font=('Consolas', 9))
+        lbl_wsjtx_ip = tk.Label(sec_wsjtx, text="WSJT-X IP Address:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
+        lbl_wsjtx_ip.grid(row=2, column=0, sticky='e', padx=5, pady=4)
+        self.ent_dialog_ip = tk.Entry(sec_wsjtx, bg="#1e1e1e", fg="#ffffff", insertbackground='white', relief='flat', font=('Consolas', 9))
         self.ent_dialog_ip.insert(0, str(config.CONFIG.get("WSJTX_IP", "224.0.0.1")))
-        self.ent_dialog_ip.grid(row=current_row, column=1, sticky='ew', padx=15, pady=6)
-        current_row += 1
+        self.ent_dialog_ip.grid(row=2, column=1, sticky='ew', padx=5, pady=4)
 
-        lbl_wsjtx_port = tk.Label(self, text="UDP Listener Port:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
-        lbl_wsjtx_port.grid(row=current_row, column=0, sticky='e', padx=15, pady=6)
-        self.ent_dialog_port = tk.Entry(self, bg="#1e1e1e", fg="#ffffff", insertbackground='white', relief='flat', font=('Consolas', 9))
+        lbl_wsjtx_port = tk.Label(sec_wsjtx, text="UDP Listener Port:", bg="#252526", fg="#ffffff", font=('Helvetica', 9))
+        lbl_wsjtx_port.grid(row=3, column=0, sticky='e', padx=5, pady=4)
+        self.ent_dialog_port = tk.Entry(sec_wsjtx, bg="#1e1e1e", fg="#ffffff", insertbackground='white', relief='flat', font=('Consolas', 9))
         self.ent_dialog_port.insert(0, str(config.CONFIG.get("WSJTX_PORT", 2237)))
-        self.ent_dialog_port.grid(row=current_row, column=1, sticky='ew', padx=15, pady=6)
-        current_row += 1
+        self.ent_dialog_port.grid(row=3, column=1, sticky='ew', padx=5, pady=4)
 
-        # Save/Cancel Action Buttons (Placed strictly at the bottom)
-        btn_frame = tk.Frame(self, bg="#252526")
-        btn_frame.grid(row=current_row, column=0, columnspan=2, pady=20, sticky='ew')
+        # Action Control Panel (Save / Cancel)
+        btn_frame = tk.Frame(self.container, bg="#252526")
+        btn_frame.pack(fill='x', pady=(15, 5))
         
         btn_save = tk.Button(btn_frame, text="Save Parameters", bg="#007acc", fg="white", font=('Helvetica', 9, 'bold'), relief='flat', width=15, command=self.save_settings)
-        btn_save.pack(side='right', padx=15)
+        btn_save.pack(side='right', padx=5)
         
         btn_cancel = tk.Button(btn_frame, text="Cancel", bg="#3c3c3c", fg="white", font=('Helvetica', 9), relief='flat', width=10, command=self.destroy)
         btn_cancel.pack(side='right', padx=5)
@@ -180,15 +215,11 @@ class OptionsDialog(tk.Toplevel):
             config.CONFIG["SDRCONNECT_HOST"] = self.ent_sdr_host.get().strip()
             config.CONFIG["SDRCONNECT_PORT"] = sdr_port
 
-            # Commit Dialog fields down into configurations layer
+            # Save WSJT-X parameters from rearranged section
             config.CONFIG["WSJTX_ENABLE"] = self.var_wsjtx_enabled.get()
             config.CONFIG["WSJTX_MODE"] = self.combo_dialog_mode.get()
             config.CONFIG["WSJTX_IP"] = self.ent_dialog_ip.get().strip()
             config.CONFIG["WSJTX_PORT"] = ws_port
-
-            # Sync active controls in Main App interface automatically
-            if hasattr(self.master, 'wsjtx_enabled_var'):
-                self.master.wsjtx_enabled_var.set(self.var_wsjtx_enabled.get())
 
             self.master.update_labels_from_config()
             config.fldigi_blackout_until = time.time() + 1.0
@@ -197,22 +228,39 @@ class OptionsDialog(tk.Toplevel):
             config.ui_print("⚙️ Configuration maps updated and saved to config.json.")
             self.destroy()
         except ValueError:
-            messagebox.showerror("Validation Error", "Ports, Tolerance, and Ports must be valid integers.")
+            messagebox.showerror("Validation Error", "Ports, Tolerance, and Durations must be valid integers.")
 
 
 class BridgeGUIApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("OmniRig - Fldigi - Wavelog Configurable Bridge")
-        self.geometry("820x680")  # Trimmed slightly since options moved to dialog modal
+        self.geometry("820x680")
         self.configure(bg="#1e1e1e")
         
         self.style = ttk.Style()
         self.style.theme_use('clam')
+        
+        # Base UI Theme Color definitions
         self.style.configure('.', background='#1e1e1e', foreground='#ffffff')
         self.style.configure('TLabelframe', background='#1e1e1e', foreground='#ffffff', bordercolor='#333333')
         self.style.configure('TLabelframe.Label', background='#1e1e1e', foreground='#00ffcc', font=('Helvetica', 10, 'bold'))
-        self.style.configure('TCombobox', fieldbackground='#2d2d2d', background='#2d2d2d', foreground='#ffffff')
+        
+        # High Contrast Dropdown Field Configurations (Ensuring dark background and white text when NOT active/selected)
+        self.style.configure('TCombobox', 
+                             fieldbackground='#121212', 
+                             background='#252526', 
+                             foreground='#ffffff',
+                             arrowcolor='#ffffff')
+        self.style.map('TCombobox', 
+                       fieldbackground=[('readonly', '#121212'), ('disabled', '#222222')],
+                       foreground=[('readonly', '#ffffff'), ('disabled', '#777777')])
+        
+        # Setup contrasting fallback colors for combobox popup list boxes globally
+        self.option_add('*TCombobox*Listbox.background', '#121212')
+        self.option_add('*TCombobox*Listbox.foreground', '#ffffff')
+        self.option_add('*TCombobox*Listbox.selectBackground', '#007acc')
+        self.option_add('*TCombobox*Listbox.selectForeground', '#ffffff')
         
         config._app_instance = self
         self.create_widgets()
@@ -281,24 +329,44 @@ class BridgeGUIApp(tk.Tk):
         self.combo_sdr_target.pack(side='left', padx=5)
         self.combo_sdr_target.bind("<<ComboboxSelected>>", self.on_sdrconnect_target_changed)
 
-        btn_row = tk.Frame(ops_lf, bg="#1e1e1e")
-        btn_row.pack(fill='x', padx=10, pady=6, side='bottom')
+        # Dynamic utility grid row 1 (Legacy Configuration Buttons)
+        btn_row_one = tk.Frame(ops_lf, bg="#1e1e1e")
+        btn_row_one.pack(fill='x', padx=10, pady=(4, 2))
 
-        btn_options = tk.Button(btn_row, text="⚙️ Options", bg="#3a3a3a", fg="white",
+        btn_options = tk.Button(btn_row_one, text="⚙️ Options", bg="#3a3a3a", fg="white",
                                 font=('Helvetica', 9, 'bold'), relief='flat', overrelief='groove',
                                 command=self.open_options_dialog)
         btn_options.pack(side='left', expand=True, fill='x', padx=2)
 
-        btn_omni_settings = tk.Button(btn_row, text="📻 Omnirig Setup", bg="#3a3a3a", fg="white",
+        btn_omni_settings = tk.Button(btn_row_one, text="📻 Omnirig Setup", bg="#3a3a3a", fg="white",
                                       font=('Helvetica', 9, 'bold'), relief='flat', overrelief='groove',
                                       command=self.open_omnirig_dialog)
         btn_omni_settings.pack(side='left', expand=True, fill='x', padx=2)
 
-        self.btn_toggle_omni = tk.Button(btn_row, text="🟢 OmniRig: Enabled", bg="#1b5e20", fg="white",
-                                         font=('Helvetica', 9, 'bold'), relief='flat', overrelief='groove',
-                                         command=self.toggle_omnirig_global)
-        self.btn_toggle_omni.pack(side='left', expand=True, fill='x', padx=2)
+        # Dynamic utility grid row 2 (Integration Control Buttons)
+        btn_row_two = tk.Frame(ops_lf, bg="#1e1e1e")
+        btn_row_two.pack(fill='x', padx=10, pady=(2, 6))
 
+        # Configured identical heights and packing states to make buttons the exact same size
+        self.btn_toggle_omni = tk.Button(btn_row_two, text="🟢 OmniRig: Enabled", bg="#1b5e20", fg="white",
+                                         font=('Helvetica', 9, 'bold'), relief='flat', overrelief='groove',
+                                         height=1, command=self.toggle_omnirig_global)
+        self.btn_toggle_omni.pack(side='left', expand=True, fill='both', padx=2)
+
+        # Browser Link Button matches OmniRig button size parameters completely
+        self.btn_send_toggle = tk.Button(
+            btn_row_two,
+            font=("Helvetica", 9, "bold"),
+            command=self.toggle_browser_sharing,
+            relief="flat",
+            bd=0,
+            overrelief='groove',
+            height=1
+        )
+        self.btn_send_toggle.pack(side='left', expand=True, fill='both', padx=2)
+        self.update_browser_toggle_visuals()
+
+        # Rig Cards Section
         cards_frame = tk.Frame(self, bg="#1e1e1e")
         cards_frame.pack(fill='x', padx=15, pady=5)
 
@@ -330,20 +398,40 @@ class BridgeGUIApp(tk.Tk):
                                      font=('Helvetica', 8, 'bold'), relief='flat', command=lambda: self.toggle_rig_polling(2))
         self.btn_poll_r2.pack(pady=6)
 
-        # Simple checkbox strip for rapid main interface control
-        quick_wsjtx_strip = tk.Frame(self, bg="#1e1e1e")
-        quick_wsjtx_strip.pack(fill="x", padx=15, pady=4)
-        self.wsjtx_enabled_var = tk.BooleanVar(value=config.CONFIG.get("WSJTX_ENABLE", True))
-        cb = ttk.Checkbutton(quick_wsjtx_strip, text="Active WSJT-X Monitor Link", variable=self.wsjtx_enabled_var, 
-                            command=lambda: [config.CONFIG.update({"WSJTX_ENABLE": self.wsjtx_enabled_var.get()}), config.save_config()])
-        cb.pack(side="left", padx=5)
-
+        # Logging View Panel
         log_lf = ttk.LabelFrame(self, text=" LIVE SYSTEM ACTIVITY LOG ")
         log_lf.pack(fill='both', expand=True, padx=15, pady=10)
         self.log_area = scrolledtext.ScrolledText(log_lf, wrap=tk.WORD, height=10, bg="#111111", fg="#33ff33", font=('Consolas', 9), insertbackground='white')
         self.log_area.pack(fill='both', expand=True, padx=5, pady=5)
 
         self.update_labels_from_config()
+
+    def toggle_browser_sharing(self):
+        """Toggles the pipeline of packet payloads streaming out to Wavelog's Tampermonkey bridge."""
+        is_sharing = config.CONFIG.get("SEND_TO_BROWSER", True)
+        config.CONFIG["SEND_TO_BROWSER"] = not is_sharing
+        config.save_config()
+        self.update_browser_toggle_visuals()
+
+    def update_browser_toggle_visuals(self):
+        """Redraws the quick-switch button to accurately match configuration memory."""
+        is_sharing = config.CONFIG.get("SEND_TO_BROWSER", True)
+        if is_sharing:
+            self.btn_send_toggle.config(
+                text="🟢 Browser Link: ACTIVE", 
+                bg="#1b5e20", 
+                fg="white", 
+                activebackground="#1b5e20"
+            )
+            config.ui_print("📡 Sending packets dynamically to active browser session enabled.")
+        else:
+            self.btn_send_toggle.config(
+                text="🔴 Browser Link: PAUSED", 
+                bg="#b71c1c", 
+                fg="white", 
+                activebackground="#b71c1c"
+            )
+            config.ui_print("⏸️ Paused packet pipeline to Browser extension.")
 
     def open_options_dialog(self):
         OptionsDialog(self)
@@ -371,11 +459,11 @@ class BridgeGUIApp(tk.Tk):
         threading.Thread(target=run, daemon=True).start()
 
     def update_labels_from_config(self):
-        self.rig1_lf.config(text=f" RIG 1: {config.CONFIG['RADIO_1_NAME']} " + ("[FLDIGI TARGET]" if config.current_fldigi_target_rig == 1 else ""))
-        self.rig2_lf.config(text=f" RIG 2: {config.CONFIG['RADIO_2_NAME']} " + ("[FLDIGI TARGET]" if config.current_fldigi_target_rig == 2 else ""))
+        self.rig1_lf.config(text=f" RIG 1: {config.CONFIG.get('RADIO_1_NAME', 'Rig 1')} " + ("[FLDIGI TARGET]" if config.current_fldigi_target_rig == 1 else ""))
+        self.rig2_lf.config(text=f" RIG 2: {config.CONFIG.get('RADIO_2_NAME', 'Rig 2')} " + ("[FLDIGI TARGET]" if config.current_fldigi_target_rig == 2 else ""))
         
-        r1_val = f"Rig 1: {config.CONFIG['RADIO_1_NAME']}"
-        r2_val = f"Rig 2: {config.CONFIG['RADIO_2_NAME']}"
+        r1_val = f"Rig 1: {config.CONFIG.get('RADIO_1_NAME', 'Rig 1')}"
+        r2_val = f"Rig 2: {config.CONFIG.get('RADIO_2_NAME', 'Rig 2')}"
         
         self.combo_target['values'] = [r1_val, r2_val]
         self.combo_target.set(r1_val if config.current_fldigi_target_rig == 1 else r2_val)
@@ -384,7 +472,6 @@ class BridgeGUIApp(tk.Tk):
         self.combo_sdr_target.set(r1_val if config.current_sdrconnect_target_rig == 1 else r2_val)
 
     def sync_polling_buttons_to_state(self):
-        """Initializes GUI cards to correctly match states loaded directly from config settings."""
         for num in (1, 2):
             btn = self.btn_poll_r1 if num == 1 else self.btn_poll_r2
             if config.rig_polling_enabled[num]:
@@ -485,7 +572,7 @@ class BridgeGUIApp(tk.Tk):
             fg="#ffffff" if sdr_status == "online" and is_sdr_active else "#777777"
         )
 
-        # Rig 1 Box View Rendering
+        # Rig 1 rendering details
         if config.rig_polling_enabled[1]:
             if config.status_states["rig1_hw"] == "not_responding":
                 self.lbl_r1_freq.config(text="NO RESPONSE", fg="#ff9900")
@@ -504,7 +591,7 @@ class BridgeGUIApp(tk.Tk):
             self.lbl_r1_freq_b.config(text="VFO-B: --", fg="#555555")
             self.lbl_r1_mode.config(text="MODE: --")
 
-        # Rig 2 Box View Rendering
+        # Rig 2 rendering details
         if config.rig_polling_enabled[2]:
             if config.status_states["rig2_hw"] == "not_responding":
                 self.lbl_r2_freq.config(text="NO RESPONSE", fg="#ff9900")

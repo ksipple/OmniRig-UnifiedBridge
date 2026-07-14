@@ -343,9 +343,6 @@ def broadcast_ws_message(payload_str):
         for dead in dead_clients:
             CONNECTED_WS_CLIENTS.discard(dead)
 
-# ==========================================
-# WSJT-X UDP DECODER & RUNNER
-# ==========================================
 def decode_utf8_string(buffer, offset):
     """Parses a Qt-serialized byte string prefixed by a 4-byte length header."""
     if offset + 4 > len(buffer):
@@ -359,6 +356,9 @@ def decode_utf8_string(buffer, offset):
     string_bytes = buffer[offset:offset+length]
     return string_bytes.decode('utf-8', errors='ignore'), offset + length
 
+# ==========================================
+# WSJT-X UDP DECODER & RUNNER
+# ==========================================
 def wsjtx_udp_tracking_listener():
     """Listens for live WSJT-X Status Packets and updates Wavelog's working cache."""
     global current_active_call, current_active_grid
@@ -369,6 +369,7 @@ def wsjtx_udp_tracking_listener():
     config.ui_print("📡 [WSJT-X Listener] Spinning up network background worker...")
     
     while True:
+        # WSJTX_ENABLE is now controlled safely from the Settings Dialog
         if not config.CONFIG.get("WSJTX_ENABLE", True):
             time.sleep(2.0)
             continue
@@ -406,71 +407,42 @@ def wsjtx_udp_tracking_listener():
                         
                     packet_type = struct.unpack(">I", message[8:12])[0]
                     
-                    # We only decode Packet Type 1 (Status packets)
-                    if packet_type == 1:
+                    if packet_type == 1: # Status Packet
                         offset = 12
-                        
-                        # 1. ID (string)
-                        _, offset = decode_utf8_string(message, offset)
-                        
-                        # 2. Dial Frequency (8 bytes - quint64)
+                        _, offset = decode_utf8_string(message, offset) # ID
                         dial_freq = struct.unpack(">Q", message[offset:offset+8])[0]
-                        offset += 8
+                        offset += 8 # Dial Freq
+                        _, offset = decode_utf8_string(message, offset) # Mode
                         
-                        # 3. Mode (string)
-                        _, offset = decode_utf8_string(message, offset)
-                        
-                        # 4. DX Call (string)
                         dx_callsign, offset = decode_utf8_string(message, offset)
                         dx_callsign = dx_callsign.strip() if dx_callsign else ""
                         
-                        # 5. Report (string)
-                        _, offset = decode_utf8_string(message, offset)
+                        _, offset = decode_utf8_string(message, offset) # Report
+                        _, offset = decode_utf8_string(message, offset) # Tx Mode
+                        offset += 3 # Skip Tx Enabled, Transmitting, Decoding bools
+                        offset += 8 # Skip Rx DF, Tx DF
+                        _, offset = decode_utf8_string(message, offset) # DE Call
+                        _, offset = decode_utf8_string(message, offset) # DE Grid
                         
-                        # 6. Tx Mode (string)
-                        _, offset = decode_utf8_string(message, offset)
-                        
-                        # 7. Tx Enabled (1 byte - bool)
-                        offset += 1
-                        
-                        # 8. Transmitting (1 byte - bool)
-                        offset += 1
-                        
-                        # 9. Decoding (1 byte - bool)
-                        offset += 1
-                        
-                        # 10. Rx DF (4 bytes - quint32)
-                        offset += 4
-                        
-                        # 11. Tx DF (4 bytes - quint32)
-                        offset += 4
-                        
-                        # 12. DE Call (string)
-                        _, offset = decode_utf8_string(message, offset)
-                        
-                        # 13. DE Grid (string)
-                        _, offset = decode_utf8_string(message, offset)
-                        
-                        # 14. DX Grid (string)
                         dx_grid, offset = decode_utf8_string(message, offset)
                         dx_grid = dx_grid.strip() if dx_grid else ""
                         
-                        # Log raw parsed status
-                        config.ui_print(f"🔍 [Parsed Status] Extracted -> Call: '{dx_callsign}', Grid: '{dx_grid}'")
-                        
                         if dx_callsign:
-                            # Trigger broadcast if this is a fresh target change
                             if dx_callsign != current_active_call or dx_grid != current_active_grid:
                                 current_active_call = dx_callsign
                                 current_active_grid = dx_grid
                                 
-                                config.ui_print(f"🎯 [WSJT-X Focus Change] Active Station: {dx_callsign} | Grid: {dx_grid or 'None'}")
+                                config.ui_print(f"🎯 [WSJT-X Focus] Active: {dx_callsign} | Grid: {dx_grid or 'None'}")
                                 
-                                ws_payload = json.dumps({
-                                    "callsign": dx_callsign,
-                                    "locator": dx_grid
-                                })
-                                broadcast_ws_message(ws_payload)
+                                # --- THE FIX: Only broadcast if browser sending is globally enabled ---
+                                if config.CONFIG.get("SEND_TO_BROWSER", True):
+                                    ws_payload = json.dumps({
+                                        "callsign": dx_callsign,
+                                        "locator": dx_grid
+                                    })
+                                    broadcast_ws_message(ws_payload)
+                                else:
+                                    config.ui_print("⏸️ [Bridge paused] Update received but Browser Outbound is suspended.")
                                 
                 except socket.timeout:
                     continue
